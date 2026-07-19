@@ -1,10 +1,22 @@
 [project]
-name = "mayfly"
+name = "mayfly-cli"
 version = "0.1.0"
-description = "Short lived ephemeral environment infrastructure"
+description = "Short lived ephemeral environments on Kubernetes: one YAML spec, an isolated namespace with emulated AWS + real service pods, TTL teardown"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["ephemeral-environments", "kubernetes", "preview-environments", "aws-emulator", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "typer>=0.12",
     "pydantic>=2.7",
@@ -18,6 +30,11 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jasondcamp/mayfly"
+Repository = "https://github.com/jasondcamp/mayfly"
+Issues = "https://github.com/jasondcamp/mayfly/issues"
 
 [project.scripts]
 mayfly = "mayfly.cli:app"

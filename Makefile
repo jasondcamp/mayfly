@@ -11,3 +11,9 @@ lint:
 
 e2e:
 	./scripts/e2e.sh
+
+build:
+	./scripts/release.sh
+
+publish:
+	./scripts/release.sh --publish
