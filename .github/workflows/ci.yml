@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv venv && uv pip install -e '.[dev]'
+      - run: uv run ruff check src tests
+      - run: uv run pytest -q
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: install k3d
+        run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - run: uv venv && uv pip install -e '.[dev]'
+      - run: chmod +x scripts/e2e.sh examples/smoke-test.sh && ./scripts/e2e.sh mayfly-ci

@@ -1,0 +1,13 @@
+.PHONY: install test lint e2e
+
+install:
+	uv venv && uv pip install -e '.[dev]'
+
+test:
+	uv run pytest -q
+
+lint:
+	uv run ruff check src tests
+
+e2e:
+	./scripts/e2e.sh

@@ -1,0 +1,150 @@
+"""Environment spec: versioned, validated schema for env.yaml files."""
+
+import hashlib
+import re
+from datetime import timedelta
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+API_VERSION = "mayfly/v1alpha1"
+DEFAULT_TTL = "8h"
+
+_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
+_TTL_RE = re.compile(r"^(\d+)([mhd])$")
+_TTL_UNITS = {"m": "minutes", "h": "hours", "d": "days"}
+
+
+def parse_ttl(value: str) -> timedelta:
+    m = _TTL_RE.match(value)
+    if not m:
+        raise ValueError(f"invalid ttl {value!r}: expected e.g. 30m, 8h, 2d")
+    return timedelta(**{_TTL_UNITS[m.group(2)]: int(m.group(1))})
+
+
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+def _validate_dns_name(v: str) -> str:
+    if not _NAME_RE.match(v):
+        raise ValueError(f"{v!r} must be a lowercase DNS-1123 label")
+    return v
+
+
+class EmulatorSpec(_StrictModel):
+    kind: Literal["ministack", "floci"] = "ministack"
+    image: str | None = None  # default: pinned per kind (see emulators.EMULATORS)
+    version: str | None = None  # image tag; default: pinned per kind
+
+    @field_validator("version")
+    @classmethod
+    def _no_latest(cls, v: str | None) -> str | None:
+        if v == "latest":
+            raise ValueError("emulator.version must be a pinned tag, not 'latest'")
+        return v
+
+
+Backend = Literal["auto", "emulator", "native"]
+
+
+class S3Spec(_StrictModel):
+    buckets: list[str] = Field(default_factory=list)
+
+    _names = field_validator("buckets")(lambda cls, v: [_validate_dns_name(b) for b in v])
+
+
+class RdsSpec(_StrictModel):
+    name: str
+    engine: Literal["postgres", "mysql", "mariadb"] = "postgres"
+    db_name: str = Field(default="app", alias="dbName")
+    backend: Backend = "auto"
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+    @property
+    def scheme(self) -> str:
+        return "postgresql" if self.engine == "postgres" else "mysql"
+
+
+class ElastiCacheSpec(_StrictModel):
+    name: str
+    backend: Backend = "auto"
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+
+class MskSpec(_StrictModel):
+    name: str
+    topics: list[str] = Field(default_factory=list)
+    backend: Backend = "auto"
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+
+class ServicesSpec(_StrictModel):
+    s3: S3Spec = Field(default_factory=S3Spec)
+    rds: list[RdsSpec] = Field(default_factory=list)
+    elasticache: list[ElastiCacheSpec] = Field(default_factory=list)
+    msk: list[MskSpec] = Field(default_factory=list)
+
+
+class AppSpec(_StrictModel):
+    enabled: bool = True
+    image: str
+    port: int = 80
+    env: dict[str, str] = Field(default_factory=dict)
+    secrets: list[str] = Field(default_factory=list)  # env-from these mayfly secrets
+
+
+class EnvSpec(_StrictModel):
+    api_version: str = Field(default=API_VERSION, alias="apiVersion")
+    seed: str
+    ttl: str = DEFAULT_TTL
+    emulator: EmulatorSpec = Field(default_factory=EmulatorSpec)
+    services: ServicesSpec = Field(default_factory=ServicesSpec)
+    apps: dict[str, AppSpec] = Field(default_factory=dict)
+
+    @field_validator("api_version")
+    @classmethod
+    def _check_api_version(cls, v: str) -> str:
+        if v != API_VERSION:
+            raise ValueError(f"unsupported apiVersion {v!r}; expected {API_VERSION}")
+        return v
+
+    @field_validator("seed")
+    @classmethod
+    def _check_seed(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("seed must be non-empty")
+        return v
+
+    @field_validator("ttl")
+    @classmethod
+    def _check_ttl(cls, v: str) -> str:
+        parse_ttl(v)
+        return v
+
+    @field_validator("apps")
+    @classmethod
+    def _check_app_names(cls, v: dict[str, AppSpec]) -> dict[str, AppSpec]:
+        for name in v:
+            _validate_dns_name(name)
+        return v
+
+    @property
+    def ttl_delta(self) -> timedelta:
+        return parse_ttl(self.ttl)
+
+    def spec_hash(self) -> str:
+        canonical = yaml.safe_dump(self.model_dump(by_alias=True), sort_keys=True)
+        return hashlib.sha256(canonical.encode()).hexdigest()[:12]
+
+
+def load_spec(path: str | Path) -> EnvSpec:
+    raw = yaml.safe_load(Path(path).read_text())
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: spec must be a YAML mapping")
+    return EnvSpec.model_validate(raw)
