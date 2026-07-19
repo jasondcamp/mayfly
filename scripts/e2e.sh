@@ -26,9 +26,10 @@ k3d cluster create "$CLUSTER" \
   --wait --timeout 180s
 KC=$(k3d kubeconfig write "$CLUSTER")
 
-echo "==> building + importing dragonfly (connectivity verifier)"
+echo "==> building + importing dragonfly (connectivity verifier) + hello (LB test app)"
 docker build -q -t dragonfly:dev dragonfly/
-k3d image import dragonfly:dev -c "$CLUSTER"
+docker build -q -t hello:dev hello/
+k3d image import dragonfly:dev hello:dev -c "$CLUSTER"
 
 echo "==> mayfly up"
 uv run mayfly up "$SPEC" --kubeconfig "$KC"
