@@ -1,8 +1,11 @@
 """mayfly CLI: up / down / status / list / render / reap."""
 
+import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+from urllib3.exceptions import MaxRetryError
 from pathlib import Path
 
 import boto3
@@ -24,13 +27,38 @@ from .emulators import (
     msk_bootstrap,
     resolve_image,
 )
-from .k8s import K8s, summarize_pods
+from .k8s import ClusterUnreachable, K8s, summarize_pods
 from .manifests import app_manifests
 from .naming import env_name, namespace_for
 from .provisioners import ProvisionContext, provision_all
 from .spec import EnvSpec, load_spec, parse_ttl
 
-app = typer.Typer(help="Short lived ephemeral environments on Kubernetes.", no_args_is_help=True)
+class _Mayfly(typer.Typer):
+    """Typer app that turns connectivity failures into one-line errors."""
+
+    def __call__(self, *args, **kwargs):
+        try:
+            return super().__call__(*args, **kwargs)
+        except (ClusterUnreachable, MaxRetryError) as e:
+            msg = str(e) if isinstance(e, ClusterUnreachable) else f"cluster unreachable: {e}"
+            typer.echo(f"error: {msg}", err=True)
+            raise SystemExit(1) from None
+
+
+app = _Mayfly(
+    help="Short lived ephemeral environments on Kubernetes.",
+    no_args_is_help=True,
+    pretty_exceptions_enable=False,
+)
+
+
+@app.callback()
+def _global_options():
+    # Library log noise (kubeconfig exec plugins, urllib3 retry warnings)
+    # otherwise drowns the actual error; mayfly speaks via stdout only.
+    logging.getLogger().setLevel(logging.CRITICAL)
+    logging.getLogger("urllib3").setLevel(logging.CRITICAL)
+    logging.getLogger("kubernetes").setLevel(logging.CRITICAL)
 
 CTX_OPT = typer.Option(None, "--context", help="kubeconfig context (default: current)")
 KCFG_OPT = typer.Option(None, "--kubeconfig", help="kubeconfig file (default: standard lookup)")

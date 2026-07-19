@@ -10,18 +10,54 @@ from typing import Optional
 
 from kubernetes import client, config, dynamic
 from kubernetes.client import ApiException
+from kubernetes.config import ConfigException
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
+
+try:  # urllib3 >= 2
+    from urllib3.exceptions import NameResolutionError
+except ImportError:  # urllib3 1.x: DNS failures surface as NewConnectionError
+    class NameResolutionError(Exception):
+        pass
 
 from . import FIELD_MANAGER
 
 
+class ClusterUnreachable(RuntimeError):
+    """The Kubernetes API server can't be reached; message is user-facing."""
+
+
+def _unreachable(e: MaxRetryError, context: Optional[str]) -> ClusterUnreachable:
+    host = f"{e.pool.host}:{e.pool.port}"
+    dns_failure = isinstance(e.reason, NameResolutionError) or (
+        "resolve" in str(e.reason).lower() or "name or service not known" in str(e.reason).lower()
+    )
+    if dns_failure:
+        what = f"cannot resolve cluster host {e.pool.host!r}"
+    elif isinstance(e.reason, ConnectTimeoutError):
+        what = f"connection to {host} timed out"
+    else:
+        what = f"cannot connect to {host}"
+    ctx = f"context {context!r}" if context else "the current kubeconfig context"
+    return ClusterUnreachable(
+        f"{what} ({ctx}). Is the cluster up? Use --context/--kubeconfig to target another."
+    )
+
+
 class K8s:
     def __init__(self, context: Optional[str] = None, kubeconfig: Optional[str] = None):
-        config.load_kube_config(config_file=kubeconfig, context=context)
+        try:
+            config.load_kube_config(config_file=kubeconfig, context=context)
+        except ConfigException as e:
+            raise ClusterUnreachable(str(e)) from e
         self.context = context
         self.kubeconfig = kubeconfig
         self.core = client.CoreV1Api()
         self.apps = client.AppsV1Api()
-        self.dyn = dynamic.DynamicClient(client.ApiClient())
+        try:
+            # first API contact (/version + discovery) happens here
+            self.dyn = dynamic.DynamicClient(client.ApiClient())
+        except MaxRetryError as e:
+            raise _unreachable(e, context) from e
 
     # ------------------------------------------------------------ apply
     def apply(self, manifest: dict, namespace: Optional[str] = None) -> None:

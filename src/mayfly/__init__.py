@@ -1,6 +1,6 @@
 """mayfly — short lived ephemeral environment infrastructure."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 MANAGED_LABEL = "mayfly.dev/managed"
 SEED_LABEL = "mayfly.dev/seed"

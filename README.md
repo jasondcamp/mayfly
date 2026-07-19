@@ -43,7 +43,7 @@ socket, no privileged pods, no real AWS.
 ## Install
 
 ```bash
-uv venv && uv pip install -e '.[dev]'   # or: pip install -e '.[dev]'
+uv sync            # dev setup (or: pip install -e . for just the CLI)
 ```
 
 Requires `kubectl` on PATH (used for port-forwarding) and a Kubernetes

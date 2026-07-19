@@ -1,18 +1,57 @@
 #!/usr/bin/env bash
-# release.sh [--publish]
+# release.sh [patch|minor|major|--no-bump] [--publish]
 # Build the mayfly-cli distribution (and optionally upload to PyPI).
 #
-# Default run: lint + tests -> build sdist/wheel into dist/ -> install the
-# wheel into a scratch venv and prove the `mayfly` command works.
+# Every run bumps the PATCH version by default (pyproject.toml +
+# src/mayfly/__init__.py — files only, committing/tagging is left to you).
+# Pass minor|major to bump differently, or --no-bump to rebuild as-is.
+# Then: lint + tests -> build sdist/wheel into dist/ -> install the wheel
+# into a scratch venv and prove the `mayfly` command works.
 # With --publish: additionally upload dist/* to PyPI via `uv publish`
 # (auth: set UV_PUBLISH_TOKEN to a PyPI API token, or use trusted publishing).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PUBLISH=0
-[ "${1:-}" = "--publish" ] && PUBLISH=1
+BUMP="patch"
+for arg in "$@"; do
+  case "$arg" in
+    --publish) PUBLISH=1 ;;
+    patch|minor|major) BUMP=$arg ;;
+    --no-bump) BUMP="" ;;
+    *) echo "usage: release.sh [patch|minor|major|--no-bump] [--publish]" >&2; exit 2 ;;
+  esac
+done
 
 command -v uv >/dev/null || { echo "missing dependency: uv" >&2; exit 1; }
+
+if [ -n "$BUMP" ]; then
+  NEW_V=$(python3 - "$BUMP" <<'PY'
+import re, sys
+level = sys.argv[1]
+text = open("pyproject.toml").read()
+current = re.search(r'^version = "(\d+)\.(\d+)\.(\d+)"$', text, re.M)
+major, minor, patch = map(int, current.groups())
+if level == "major":
+    major, minor, patch = major + 1, 0, 0
+elif level == "minor":
+    minor, patch = minor + 1, 0
+else:
+    patch += 1
+new = f"{major}.{minor}.{patch}"
+open("pyproject.toml", "w").write(
+    text.replace(current.group(0), f'version = "{new}"', 1)
+)
+init = "src/mayfly/__init__.py"
+itext = open(init).read()
+open(init, "w").write(
+    re.sub(r'^__version__ = ".*"$', f'__version__ = "{new}"', itext, 1, re.M)
+)
+print(new)
+PY
+)
+  echo "==> bumped version ($BUMP) -> $NEW_V  (commit + tag when ready)"
+fi
 
 # version consistency: pyproject vs package
 PYPROJECT_V=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
