@@ -84,3 +84,10 @@ def test_load_spec(tmp_path):
     p = tmp_path / "env.yaml"
     p.write_text("seed: file-test\n")
     assert load_spec(p).seed == "file-test"
+
+
+def test_namespace_prefix_validated():
+    spec = EnvSpec.model_validate({"seed": "x", "namespacePrefix": "team-a"})
+    assert spec.namespace_prefix == "team-a"
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "namespacePrefix": "Bad_Prefix"})

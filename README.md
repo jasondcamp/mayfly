@@ -10,9 +10,11 @@ socket, no privileged pods, no real AWS.
 ## How it works
 
 - Each environment is one **namespace**, named deterministically from the
-  spec's `seed` (`env-merry-blonde-stoat-f1ee`); namespace deletion is
-  complete teardown. Two specs with different seeds coexist; re-running
-  `up` on the same spec is idempotent.
+  spec's `seed` (`merry-blonde-stoat`, or `env-merry-blonde-stoat` with
+  `namespacePrefix: env`); namespace deletion is complete teardown. Two
+  specs with different seeds coexist; re-running `up` on the same spec is
+  idempotent, and `up` refuses a namespace whose recorded seed differs
+  (name collisions error instead of cross-contaminating).
 - A **swappable AWS emulator** (`emulator.kind`: `ministack` default, or
   `floci`) runs inside the namespace behind a single Service — apps and
   provisioners always use `http://aws:4566`. Emulator images are
@@ -64,11 +66,18 @@ mayfly reap [--dry-run]            # delete every expired environment
 All cluster-touching commands take `--context` / `--kubeconfig`. `down` and
 `reap` refuse namespaces not labeled `mayfly.dev/managed=true`.
 
+The seed is the environment's identity: same seed → same environment
+(idempotent update/heal), new seed → a fresh environment alongside it.
+`--seed` overrides the spec without editing it — `mayfly up --seed pr-1234`
+in CI gives each PR its own environment from one shared spec file, and
+`mayfly up --seed scratch-$(whoami)` gives you a personal sandbox.
+
 ## Spec
 
 ```yaml
 apiVersion: mayfly/v1alpha1
 seed: pr-1234          # deterministic env name derives from this
+# namespacePrefix: env # namespace becomes env-<name>; omit for bare <name>
 ttl: 8h                # reaped after this
 
 emulator:

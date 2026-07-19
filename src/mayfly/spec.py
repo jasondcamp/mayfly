@@ -122,6 +122,7 @@ class AppSpec(_StrictModel):
 class EnvSpec(_StrictModel):
     api_version: str = Field(default=API_VERSION, alias="apiVersion")
     seed: str
+    namespace_prefix: Optional[str] = Field(default=None, alias="namespacePrefix")
     ttl: str = DEFAULT_TTL
     emulator: EmulatorSpec = Field(default_factory=EmulatorSpec)
     services: ServicesSpec = Field(default_factory=ServicesSpec)
@@ -139,6 +140,15 @@ class EnvSpec(_StrictModel):
     def _check_seed(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("seed must be non-empty")
+        return v
+
+    @field_validator("namespace_prefix")
+    @classmethod
+    def _check_prefix(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            _validate_dns_name(v)
+            if len(v) > 30:
+                raise ValueError("namespacePrefix too long (max 30 chars)")
         return v
 
     @field_validator("ttl")

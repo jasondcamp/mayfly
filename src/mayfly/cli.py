@@ -62,6 +62,9 @@ def _global_options():
 
 CTX_OPT = typer.Option(None, "--context", help="kubeconfig context (default: current)")
 KCFG_OPT = typer.Option(None, "--kubeconfig", help="kubeconfig file (default: standard lookup)")
+SEED_OPT = typer.Option(
+    None, "--seed", help="override the spec's seed (selects/creates a different environment)"
+)
 
 
 def _say(msg: str) -> None:
@@ -72,11 +75,34 @@ def _detail(msg: str) -> None:
     typer.echo(f"    {msg}")
 
 
-def _load(spec_file: Path) -> EnvSpec:
+def _load(spec_file: Path, seed: Optional[str] = None) -> EnvSpec:
     try:
-        return load_spec(spec_file)
+        spec = load_spec(spec_file)
     except Exception as e:
         typer.echo(f"spec error: {e}", err=True)
+        raise typer.Exit(1)
+    if seed:
+        spec = spec.model_copy(update={"seed": seed})
+    return spec
+
+
+def _seed_label(seed: str) -> str:
+    return seed.replace(" ", "_")[:63]
+
+
+def _guard_seed_collision(k8s: K8s, ns: str, seed: str) -> None:
+    """Without a hash suffix, two seeds can map to the same words; refuse to
+    adopt a namespace that records a different seed."""
+    obj = k8s.get_namespace(ns)
+    if obj is None:
+        return
+    recorded = (obj.metadata.labels or {}).get(SEED_LABEL)
+    if recorded and recorded != _seed_label(seed):
+        typer.echo(
+            f"error: namespace {ns} already belongs to seed {recorded!r} "
+            f"(yours: {seed!r}) — name collision; pick a different seed",
+            err=True,
+        )
         raise typer.Exit(1)
 
 
@@ -106,6 +132,7 @@ def version():
 @app.command()
 def up(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
+    seed: Optional[str] = SEED_OPT,
     context: Optional[str] = CTX_OPT,
     kubeconfig: Optional[str] = KCFG_OPT,
     pull_secret_namespace: str = typer.Option(
@@ -115,19 +142,20 @@ def up(
     ),
 ):
     """Create or update the environment described by the spec."""
-    spec = _load(spec_file)
+    spec = _load(spec_file, seed)
     name = env_name(spec.seed)
-    ns = namespace_for(spec.seed)
+    ns = namespace_for(spec.seed, spec.namespace_prefix)
     _say(f"environment {name} (namespace {ns}, seed {spec.seed!r}, ttl {spec.ttl})")
 
     k8s = K8s(context, kubeconfig)
+    _guard_seed_collision(k8s, ns, spec.seed)
     now = datetime.now(timezone.utc)
     expires = now + spec.ttl_delta
     k8s.ensure_namespace(
         ns,
         labels={
             MANAGED_LABEL: "true",
-            SEED_LABEL: spec.seed.replace(" ", "_")[:63],
+            SEED_LABEL: _seed_label(spec.seed),
             SPEC_HASH_LABEL: spec.spec_hash(),
         },
         annotations={
@@ -177,12 +205,18 @@ def up(
 @app.command()
 def down(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
+    seed: Optional[str] = SEED_OPT,
     name: Optional[str] = typer.Option(None, "--name", help="environment name instead of spec"),
     context: Optional[str] = CTX_OPT,
     kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Destroy the environment (deletes its namespace)."""
-    ns = f"env-{name}" if name else namespace_for(_load(spec_file).seed)
+    spec = _load(spec_file, seed)
+    ns = (
+        namespace_for(spec.seed, spec.namespace_prefix)
+        if not name
+        else (f"{spec.namespace_prefix}-{name}" if spec.namespace_prefix else name)
+    )
     k8s = K8s(context, kubeconfig)
     _managed_namespace(k8s, ns)
     _say(f"deleting {ns}")
@@ -205,7 +239,9 @@ def list_envs(context: Optional[str] = CTX_OPT, kubeconfig: Optional[str] = KCFG
         labels = n.metadata.labels or {}
         age = now - n.metadata.creation_timestamp
         expires = ann.get(EXPIRES_AT_ANNOTATION)
-        if expires:
+        if n.metadata.deletion_timestamp:
+            expires_in = "TERMINATING"
+        elif expires:
             left = datetime.fromisoformat(expires) - now
             expires_in = _fmt_delta(left) if left > timedelta(0) else "EXPIRED"
         else:
@@ -219,12 +255,13 @@ def list_envs(context: Optional[str] = CTX_OPT, kubeconfig: Optional[str] = KCFG
 @app.command()
 def status(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
+    seed: Optional[str] = SEED_OPT,
     context: Optional[str] = CTX_OPT,
     kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Show pods and provisioned endpoints for the environment."""
-    spec = _load(spec_file)
-    ns = namespace_for(spec.seed)
+    spec = _load(spec_file, seed)
+    ns = namespace_for(spec.seed, spec.namespace_prefix)
     k8s = K8s(context, kubeconfig)
     obj = _managed_namespace(k8s, ns)
     ann = obj.metadata.annotations or {}
@@ -248,10 +285,11 @@ def status(
 @app.command()
 def render(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
+    seed: Optional[str] = SEED_OPT,
 ):
     """Print the resolved plan (name, namespace, manifests) without touching the cluster."""
-    spec = _load(spec_file)
-    ns = namespace_for(spec.seed)
+    spec = _load(spec_file, seed)
+    ns = namespace_for(spec.seed, spec.namespace_prefix)
     docs = [
         {"mayfly": {"name": env_name(spec.seed), "namespace": ns, "ttl": spec.ttl,
                     "emulator": resolve_image(spec.emulator), "specHash": spec.spec_hash()}},
@@ -274,6 +312,8 @@ def reap(
     now = datetime.now(timezone.utc)
     reaped = 0
     for n in k8s.list_namespaces(f"{MANAGED_LABEL}=true"):
+        if n.metadata.deletion_timestamp:
+            continue  # already terminating
         ann = n.metadata.annotations or {}
         expires = ann.get(EXPIRES_AT_ANNOTATION)
         if not expires:
@@ -285,19 +325,28 @@ def reap(
                 _say(f"reaping {n.metadata.name} (expired {expires})")
                 k8s.delete_namespace(n.metadata.name, wait=False)
             reaped += 1
-    _say(f"{reaped} environment(s) {'eligible' if dry_run else 'reaped'}")
+    if dry_run:
+        _say(f"{reaped} environment(s) eligible")
+    else:
+        _say(
+            f"{reaped} environment(s) reaped"
+            + (" (namespaces terminate in the background; "
+               "they show TERMINATING in `mayfly list` until gone)" if reaped else "")
+        )
 
 
 @app.command()
 def extend(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
+    seed: Optional[str] = SEED_OPT,
     ttl: str = typer.Option(..., "--ttl", help="new TTL from now, e.g. 4h"),
     context: Optional[str] = CTX_OPT,
     kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Push the environment's expiry out to now + TTL."""
     delta = parse_ttl(ttl)
-    ns = namespace_for(_load(spec_file).seed)
+    spec = _load(spec_file, seed)
+    ns = namespace_for(spec.seed, spec.namespace_prefix)
     k8s = K8s(context, kubeconfig)
     _managed_namespace(k8s, ns)
     expires = (datetime.now(timezone.utc) + delta).isoformat()
