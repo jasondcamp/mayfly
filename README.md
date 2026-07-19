@@ -91,11 +91,24 @@ services:
       topics: [orders]
 
 apps:
-  echo:
-    image: ealen/echo-server:latest
-    port: 80
+  myapi:
+    image: ghcr.io/you/myapi:sha-abc123
+    port: 3000
+    command: ["/bin/server"]     # optional entrypoint override
+    args: ["--verbose"]
+    replicas: 2
+    env: {LOG_LEVEL: debug}
     secrets: [rds-appdb, elasticache-cache-a]  # env-from these secrets
+    resources: {cpu: 100m, memory: 128Mi, memoryLimit: 512Mi}
+    readiness: {path: /healthz}  # httpGet probe; omit for none
+    imagePullSecret: regcred     # copied into the namespace at `up` from
+                                 # --pull-secret-namespace (default "default")
 ```
+
+Each app becomes a Deployment + Service reachable at `<name>:8080`
+in-namespace. App pods get `AWS_ENDPOINT_URL` plus whatever the listed
+secrets carry (`DATABASE_URL`, `REDIS_URL`, `KAFKA_BROKERS`, ...), and apps
+deploy only after all services are provisioned.
 
 Secrets written per service: `s3-buckets` (BUCKETS, S3_ENDPOINT),
 `rds-<name>` (DATABASE_URL, DB_*), `elasticache-<name>` (REDIS_URL, REDIS_*),

@@ -79,6 +79,11 @@ def up(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
     context: str | None = CTX_OPT,
     kubeconfig: str | None = KCFG_OPT,
+    pull_secret_namespace: str = typer.Option(
+        "default",
+        "--pull-secret-namespace",
+        help="namespace to copy imagePullSecret secrets from",
+    ),
 ):
     """Create or update the environment described by the spec."""
     spec = _load(spec_file)
@@ -122,6 +127,10 @@ def up(
 
     enabled_apps = {n: a for n, a in spec.apps.items() if a.enabled}
     if enabled_apps:
+        pull_secrets = {a.image_pull_secret for a in enabled_apps.values() if a.image_pull_secret}
+        for ps in sorted(pull_secrets):
+            k8s.copy_secret(ps, pull_secret_namespace, ns)
+            _detail(f"pull secret {ps} copied from {pull_secret_namespace}")
         _say(f"deploying apps: {', '.join(enabled_apps)}")
         for app_name, app_spec in enabled_apps.items():
             k8s.apply_all(app_manifests(app_name, app_spec), ns)

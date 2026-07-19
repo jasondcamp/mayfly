@@ -100,6 +100,49 @@ def test_kubedock_rolebinding_namespaced_subject():
     assert rb["subjects"][0]["namespace"] == "env-y"
 
 
+def test_app_full_spec_rendering():
+    app = AppSpec(
+        image="ghcr.io/x/api:1",
+        port=3000,
+        command=["/bin/server"],
+        args=["--verbose"],
+        replicas=3,
+        resources={"cpu": "100m", "memory": "128Mi", "memoryLimit": "512Mi", "cpuLimit": "1"},
+        readiness={"path": "/healthz", "initialDelaySeconds": 5},
+        imagePullSecret="regcred",
+    )
+    (dep, svc) = app_manifests("myapi", app)
+    assert dep["spec"]["replicas"] == 3
+    pod = dep["spec"]["template"]["spec"]
+    assert pod["imagePullSecrets"] == [{"name": "regcred"}]
+    c = pod["containers"][0]
+    assert c["command"] == ["/bin/server"]
+    assert c["args"] == ["--verbose"]
+    assert c["resources"] == {
+        "requests": {"cpu": "100m", "memory": "128Mi"},
+        "limits": {"memory": "512Mi", "cpu": "1"},
+    }
+    assert c["readinessProbe"] == {
+        "httpGet": {"path": "/healthz", "port": 3000},
+        "initialDelaySeconds": 5,
+        "periodSeconds": 5,
+    }
+    assert svc["spec"]["ports"] == [{"port": 8080, "targetPort": 3000}]
+
+
+def test_app_minimal_defaults_unchanged():
+    (dep, _svc) = app_manifests("echo", AppSpec(image="e:1"))
+    assert dep["spec"]["replicas"] == 1
+    pod = dep["spec"]["template"]["spec"]
+    assert "imagePullSecrets" not in pod
+    c = pod["containers"][0]
+    assert "command" not in c and "args" not in c and "readinessProbe" not in c
+    assert c["resources"] == {
+        "requests": {"cpu": "10m", "memory": "32Mi"},
+        "limits": {"memory": "256Mi"},
+    }
+
+
 def test_app_secrets_mounted_env_from():
     (dep, _svc) = app_manifests("web", AppSpec(image="i:1", secrets=["rds-appdb"]))
     container = dep["spec"]["template"]["spec"]["containers"][0]

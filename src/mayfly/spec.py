@@ -91,12 +91,32 @@ class ServicesSpec(_StrictModel):
     msk: list[MskSpec] = Field(default_factory=list)
 
 
+class ResourcesSpec(_StrictModel):
+    cpu: str = "10m"  # request
+    memory: str = "32Mi"  # request
+    cpu_limit: str | None = Field(default=None, alias="cpuLimit")
+    memory_limit: str = Field(default="256Mi", alias="memoryLimit")
+
+
+class ReadinessSpec(_StrictModel):
+    path: str = "/"
+    port: int | None = None  # default: the app's port
+    initial_delay_seconds: int = Field(default=2, alias="initialDelaySeconds", ge=0)
+    period_seconds: int = Field(default=5, alias="periodSeconds", ge=1)
+
+
 class AppSpec(_StrictModel):
     enabled: bool = True
     image: str
     port: int = 80
+    command: list[str] = Field(default_factory=list)  # override image entrypoint
+    args: list[str] = Field(default_factory=list)
+    replicas: int = Field(default=1, ge=1)
     env: dict[str, str] = Field(default_factory=dict)
     secrets: list[str] = Field(default_factory=list)  # env-from these mayfly secrets
+    resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
+    readiness: ReadinessSpec | None = None  # httpGet probe; omit for none
+    image_pull_secret: str | None = Field(default=None, alias="imagePullSecret")
 
 
 class EnvSpec(_StrictModel):

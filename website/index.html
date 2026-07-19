@@ -92,6 +92,16 @@
         .hl-value { color: theme('colors.brand-amber'); }
         .hl-string { color: theme('colors.text.main'); }
 
+        /* Gentle mascot float */
+        @keyframes mascot-float {
+            0%, 100% { transform: translateY(0) rotate(-1deg); }
+            50% { transform: translateY(-6px) rotate(1.5deg); }
+        }
+        .mascot-float { animation: mascot-float 3.5s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+            .mascot-float { animation: none; }
+        }
+
         /* Line-numbered code block */
         .code-block { counter-reset: line; }
         .code-line { white-space: pre; counter-increment: line; }
@@ -124,7 +134,7 @@
             <!-- Hero Typography -->
             <div class="space-y-8 z-10 text-center md:text-left">
                 <h1 class="flex items-center justify-center md:justify-start text-6xl sm:text-7xl lg:text-[5.5rem] font-bold tracking-tight text-brand-green leading-[1.1] filter drop-shadow-[0_0_12px_rgba(123,197,85,0.12)]">
-                    <img src="assets/mascot-512.png" alt="" class="h-14 sm:h-16 lg:h-20 w-auto shrink-0 mr-5"><span class="relative -top-2.5">mayfly</span>
+                    <img src="assets/mascot-512.png" alt="" class="mascot-float h-14 sm:h-16 lg:h-20 w-auto shrink-0 mr-5"><span class="relative -top-2.5">mayfly</span>
                 </h1>
 
                 <div class="space-y-6 max-w-xl mx-auto md:mx-0">

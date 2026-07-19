@@ -93,6 +93,29 @@ class K8s:
             namespace=namespace,
         )
 
+    def copy_secret(self, name: str, source_ns: str, target_ns: str) -> None:
+        """Copy a secret (e.g. registry credentials) into an env namespace."""
+        try:
+            s = self.core.read_namespaced_secret(name, source_ns)
+        except ApiException as e:
+            if e.status == 404:
+                raise RuntimeError(
+                    f"pull secret {name!r} not found in namespace {source_ns!r}; "
+                    f"create it there (kubectl create secret docker-registry ...) "
+                    f"or pass --pull-secret-namespace"
+                ) from e
+            raise
+        self.apply(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": name},
+                "type": s.type,
+                "data": s.data or {},
+            },
+            namespace=target_ns,
+        )
+
     def read_secret(self, namespace: str, name: str) -> dict[str, str] | None:
         import base64
 
