@@ -119,9 +119,42 @@ in-namespace. App pods get `AWS_ENDPOINT_URL` plus whatever the listed
 secrets carry (`DATABASE_URL`, `REDIS_URL`, `KAFKA_BROKERS`, ...), and apps
 deploy only after all services are provisioned.
 
+## dragonfly — the connectivity verifier
+
+`dragonfly/` is a small companion app that proves an environment's wiring
+end-to-end with **zero configuration**: it discovers services the way a
+real AWS application would — `describe-db-instances`,
+`describe-cache-clusters`, `list-clusters`/`get-bootstrap-brokers` against
+the emulator's control plane (using the `AWS_ENDPOINT_URL` mayfly injects
+into every app pod) — then round-trips data through every instance found:
+postgres insert+select, redis SET+GET, kafka produce+consume. Declare a
+service in the spec and a tile appears; no secrets to mount, no lists to
+maintain. It serves a web interface at `/` (one live status tile per
+instance, auto-refresh every 5s), JSON at `/api`, and `/healthz` for its
+readiness probe — so the dragonfly pod only goes **Ready** once every
+discovered service actually works, making `mayfly up`'s success itself a
+connectivity test. It's also a standing fidelity test of the emulator's
+discovery APIs: if a `describe-*` call returns an endpoint that doesn't
+work, dragonfly is the first to know.
+
+```bash
+docker build -t dragonfly:dev dragonfly/
+k3d image import dragonfly:dev -c mayfly-dev
+mayfly up examples/env.yaml
+kubectl -n <namespace> port-forward svc/dragonfly 8080:8080  # then open http://localhost:8080
+```
+
+The e2e harness builds and imports it automatically; the example spec wires
+it to all three services.
+
 Secrets written per service: `s3-buckets` (BUCKETS, S3_ENDPOINT),
 `rds-<name>` (DATABASE_URL, DB_*), `elasticache-<name>` (REDIS_URL, REDIS_*),
-`msk-<name>` (KAFKA_BROKERS).
+`msk-<name>` (KAFKA_BROKERS), `dynamodb-<name>` (TABLE_NAME, HASH_KEY,
+DYNAMODB_ENDPOINT).
+
+**Invariant:** every service section the spec supports is (a) provisioned
+with a Secret contract and (b) verified by dragonfly — adding a service
+kind to mayfly means adding its dragonfly check in the same change.
 
 ## Development & testing
 

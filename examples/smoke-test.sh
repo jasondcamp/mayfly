@@ -54,6 +54,12 @@ BROKERS=$(secret msk-events KAFKA_BROKERS)
 "${K[@]}" run smoke-kafka --rm -i --restart=Never --image=redpandadata/redpanda:v24.2.18 \
   --command -- sh -c "echo smoke-payload | rpk topic produce orders --brokers $BROKERS && rpk topic consume orders --brokers $BROKERS -n 1 -o start"
 
+echo "== dragonfly: secret-driven connectivity report"
+"${K[@]}" run smoke-dragonfly --rm -i --restart=Never --image=busybox:1.36 \
+  --command -- wget -qO- http://dragonfly:8080/api
+"${K[@]}" run smoke-dragonfly-hz --rm -i --restart=Never --image=busybox:1.36 \
+  --command -- sh -c 'wget -qO- http://dragonfly:8080/healthz && echo " (healthz 200)"'
+
 echo "== echo app reachable in-cluster"
 "${K[@]}" run smoke-echo --rm -i --restart=Never --image=busybox:1.36 \
   --command -- wget -qO- http://echo:8080 | head -c 200 || true

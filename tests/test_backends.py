@@ -31,3 +31,8 @@ def test_latest_version_rejected():
     import pytest
     with pytest.raises(ValueError):
         EnvSpec.model_validate({"seed": "x", "emulator": {"version": "latest"}})
+
+
+def test_dynamodb_emulator_only():
+    for kind in ("ministack", "floci"):
+        assert resolve_backend("auto", "dynamodb", _spec(kind)) == "emulator"

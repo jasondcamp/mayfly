@@ -119,12 +119,21 @@ class K8s:
             raise TimeoutError(f"namespace {name} still terminating after {timeout}s")
 
     # ---------------------------------------------------------- secrets
-    def write_secret(self, namespace: str, name: str, data: dict[str, str]) -> None:
+    def write_secret(
+        self,
+        namespace: str,
+        name: str,
+        data: dict[str, str],
+        labels: Optional[dict] = None,
+    ) -> None:
+        metadata: dict = {"name": name}
+        if labels:
+            metadata["labels"] = labels
         self.apply(
             {
                 "apiVersion": "v1",
                 "kind": "Secret",
-                "metadata": {"name": name},
+                "metadata": metadata,
                 "stringData": data,
             },
             namespace=namespace,

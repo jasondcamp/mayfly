@@ -91,3 +91,11 @@ def test_namespace_prefix_validated():
     assert spec.namespace_prefix == "team-a"
     with pytest.raises(ValueError):
         EnvSpec.model_validate({"seed": "x", "namespacePrefix": "Bad_Prefix"})
+
+
+def test_dynamodb_spec():
+    spec = EnvSpec.model_validate(
+        {"seed": "x", "services": {"dynamodb": [{"name": "sessions"}, {"name": "carts", "hashKey": "cartId"}]}}
+    )
+    assert spec.services.dynamodb[0].hash_key == "id"
+    assert spec.services.dynamodb[1].hash_key == "cartId"

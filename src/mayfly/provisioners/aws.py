@@ -63,6 +63,35 @@ class S3Provisioner:
         }
 
 
+class DynamoProvisioner:
+    def provision(self, items, ctx) -> dict:
+        secrets = {}
+        ddb = ctx.session_factory().client("dynamodb")
+        for table in items:
+            ctx.progress(f"dynamodb: {table.name} creating")
+            if table.name not in ddb.list_tables().get("TableNames", []):
+                ddb.create_table(
+                    TableName=table.name,
+                    AttributeDefinitions=[
+                        {"AttributeName": table.hash_key, "AttributeType": "S"}
+                    ],
+                    KeySchema=[{"AttributeName": table.hash_key, "KeyType": "HASH"}],
+                    BillingMode="PAY_PER_REQUEST",
+                )
+
+            def status():
+                return ddb.describe_table(TableName=table.name)["Table"]["TableStatus"]
+
+            _wait(f"dynamodb/{table.name}", 60, status, "ACTIVE", ctx.progress)
+            ctx.progress(f"dynamodb: {table.name} ACTIVE")
+            secrets[f"dynamodb-{table.name}"] = {
+                "TABLE_NAME": table.name,
+                "HASH_KEY": table.hash_key,
+                "DYNAMODB_ENDPOINT": AWS_ENDPOINT,
+            }
+        return secrets
+
+
 class RdsProvisioner:
     def provision(self, items, ctx) -> dict:
         secrets = {}

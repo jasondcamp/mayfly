@@ -84,11 +84,20 @@ class MskSpec(_StrictModel):
     _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
 
 
+class DynamoSpec(_StrictModel):
+    name: str
+    hash_key: str = Field(default="id", alias="hashKey")
+    backend: Backend = "auto"  # emulator-only; native would error
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+
 class ServicesSpec(_StrictModel):
     s3: S3Spec = Field(default_factory=S3Spec)
     rds: list[RdsSpec] = Field(default_factory=list)
     elasticache: list[ElastiCacheSpec] = Field(default_factory=list)
     msk: list[MskSpec] = Field(default_factory=list)
+    dynamodb: list[DynamoSpec] = Field(default_factory=list)
 
 
 class ResourcesSpec(_StrictModel):
@@ -105,6 +114,28 @@ class ReadinessSpec(_StrictModel):
     period_seconds: int = Field(default=5, alias="periodSeconds", ge=1)
 
 
+class SecretRefSpec(_StrictModel):
+    name: str
+    prefix: Optional[str] = None  # env-var prefix, e.g. CACHE_A_ -> CACHE_A_REDIS_HOST
+
+    @field_validator("prefix")
+    @classmethod
+    def _check_prefix(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not re.match(r"^[A-Z][A-Z0-9_]*_$", v):
+            raise ValueError(
+                f"prefix {v!r} must be UPPER_SNAKE ending with '_' (e.g. CACHE_A_)"
+            )
+        return v
+
+
+SecretRef = Union[str, SecretRefSpec]
+
+
+class AppIngressSpec(_StrictModel):
+    host: Optional[str] = None  # default: <app>.<namespace>.localtest.me
+    class_name: Optional[str] = Field(default=None, alias="className")
+
+
 class AppSpec(_StrictModel):
     enabled: bool = True
     image: str
@@ -113,10 +144,13 @@ class AppSpec(_StrictModel):
     args: list[str] = Field(default_factory=list)
     replicas: int = Field(default=1, ge=1)
     env: dict[str, str] = Field(default_factory=dict)
-    secrets: list[str] = Field(default_factory=list)  # env-from these mayfly secrets
+    # env-from these mayfly secrets; entries are a name or {name, prefix} —
+    # a prefix namespaces colliding keys (e.g. several elasticache secrets)
+    secrets: list[SecretRef] = Field(default_factory=list)
     resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
     readiness: Optional[ReadinessSpec] = None  # httpGet probe; omit for none
     image_pull_secret: Optional[str] = Field(default=None, alias="imagePullSecret")
+    ingress: Optional[AppIngressSpec] = None  # opt-in; omit for cluster-internal only
 
 
 class EnvSpec(_StrictModel):

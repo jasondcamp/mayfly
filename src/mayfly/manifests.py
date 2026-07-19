@@ -21,7 +21,11 @@ def _env_list(env: dict[str, str]) -> list[dict]:
     return [{"name": k, "value": v} for k, v in env.items()]
 
 
-def app_manifests(name: str, app: AppSpec) -> list[dict]:
+def app_ingress_host(name: str, app: AppSpec, namespace: str) -> str:
+    return app.ingress.host or f"{name}.{namespace}.localtest.me"
+
+
+def app_manifests(name: str, app: AppSpec, namespace: str) -> list[dict]:
     env = {**AWS_ENV, **app.env}
     limits = {"memory": app.resources.memory_limit}
     if app.resources.cpu_limit:
@@ -50,11 +54,20 @@ def app_manifests(name: str, app: AppSpec) -> list[dict]:
             "periodSeconds": app.readiness.period_seconds,
         }
     if app.secrets:
-        container["envFrom"] = [{"secretRef": {"name": s}} for s in app.secrets]
+        env_from = []
+        for ref in app.secrets:
+            if isinstance(ref, str):
+                env_from.append({"secretRef": {"name": ref}})
+            else:
+                entry: dict = {"secretRef": {"name": ref.name}}
+                if ref.prefix:
+                    entry["prefix"] = ref.prefix
+                env_from.append(entry)
+        container["envFrom"] = env_from
     pod_spec: dict = {"enableServiceLinks": False, "containers": [container]}
     if app.image_pull_secret:
         pod_spec["imagePullSecrets"] = [{"name": app.image_pull_secret}]
-    return [
+    manifests = [
         {
             "apiVersion": "apps/v1",
             "kind": "Deployment",
@@ -78,3 +91,33 @@ def app_manifests(name: str, app: AppSpec) -> list[dict]:
             },
         },
     ]
+    if app.ingress:
+        spec: dict = {
+            "rules": [
+                {
+                    "host": app_ingress_host(name, app, namespace),
+                    "http": {
+                        "paths": [
+                            {
+                                "path": "/",
+                                "pathType": "Prefix",
+                                "backend": {
+                                    "service": {"name": name, "port": {"number": 8080}}
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+        if app.ingress.class_name:
+            spec["ingressClassName"] = app.ingress.class_name
+        manifests.append(
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "Ingress",
+                "metadata": {"name": name},
+                "spec": spec,
+            }
+        )
+    return manifests

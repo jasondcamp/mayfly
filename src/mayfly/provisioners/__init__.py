@@ -24,6 +24,7 @@ from ..emulators import api_backed_services
 from ..k8s import K8s
 from ..spec import Backend, EnvSpec
 from .aws import (
+    DynamoProvisioner,
     ElastiCacheProvisioner,
     MskHybridProvisioner,
     RdsProvisioner,
@@ -49,6 +50,7 @@ _EMULATOR = {
     "elasticache": ElastiCacheProvisioner,
     # hybrid: native broker + control-plane registration in the emulator
     "msk": MskHybridProvisioner,
+    "dynamodb": DynamoProvisioner,  # in-process; no native backend exists
 }
 _NATIVE = {
     "rds": RdsNativeProvisioner,
@@ -71,10 +73,16 @@ def provision_all(spec: EnvSpec, ctx: ProvisionContext) -> dict[str, dict[str, s
         ("rds", spec.services.rds),
         ("elasticache", spec.services.elasticache),
         ("msk", spec.services.msk),
+        ("dynamodb", spec.services.dynamodb),
     ):
         for backend in ("emulator", "native"):
             chosen = [i for i in items if resolve_backend(i.backend, svc_class, spec) == backend]
             if chosen:
                 registry = _EMULATOR if backend == "emulator" else _NATIVE
+                if svc_class not in registry:
+                    raise ValueError(
+                        f"{svc_class} has no {backend} backend "
+                        f"(remove 'backend: {backend}' from the spec)"
+                    )
                 secrets.update(registry[svc_class]().provision(chosen, ctx))
     return secrets
