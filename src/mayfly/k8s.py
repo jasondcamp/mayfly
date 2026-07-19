@@ -6,6 +6,7 @@ import re
 import subprocess
 import time
 from collections.abc import Iterator
+from typing import Optional
 
 from kubernetes import client, config, dynamic
 from kubernetes.client import ApiException
@@ -14,7 +15,7 @@ from . import FIELD_MANAGER
 
 
 class K8s:
-    def __init__(self, context: str | None = None, kubeconfig: str | None = None):
+    def __init__(self, context: Optional[str] = None, kubeconfig: Optional[str] = None):
         config.load_kube_config(config_file=kubeconfig, context=context)
         self.context = context
         self.kubeconfig = kubeconfig
@@ -23,7 +24,7 @@ class K8s:
         self.dyn = dynamic.DynamicClient(client.ApiClient())
 
     # ------------------------------------------------------------ apply
-    def apply(self, manifest: dict, namespace: str | None = None) -> None:
+    def apply(self, manifest: dict, namespace: Optional[str] = None) -> None:
         """Server-side apply a single manifest dict."""
         resource = self.dyn.resources.get(
             api_version=manifest["apiVersion"], kind=manifest["kind"]
@@ -116,7 +117,7 @@ class K8s:
             namespace=target_ns,
         )
 
-    def read_secret(self, namespace: str, name: str) -> dict[str, str] | None:
+    def read_secret(self, namespace: str, name: str) -> Optional[dict]:
         import base64
 
         try:
@@ -169,7 +170,7 @@ class K8s:
         ]
         if not ready:
             raise RuntimeError(f"no ready pod for {namespace}/{deployment}")
-        last_err: Exception | None = None
+        last_err: Optional[Exception] = None
         for _ in range(retries):
             try:
                 return stream(

@@ -19,6 +19,7 @@ Topologies (validated 2026-07-18 on k3d + kubedock):
 """
 
 from dataclasses import dataclass
+from typing import Optional
 
 from .spec import EmulatorSpec, EnvSpec
 
@@ -32,10 +33,11 @@ KAFKA_PORT = 9092
 PORT_RANGE = 8  # per service class, pre-exposed on the aws Service
 
 
-def msk_bootstrap(spec: EnvSpec) -> str | None:
+def msk_bootstrap(spec: EnvSpec) -> Optional[str]:
     """Bootstrap-broker string for the natively-deployed MSK brokers."""
     brokers = [f"msk-{m.name}:{KAFKA_PORT}" for m in spec.services.msk]
     return ",".join(brokers) or None
+
 
 KUBEDOCK_IMAGE = (
     "joyrex2001/kubedock:0.22.0"
@@ -47,7 +49,7 @@ KUBEDOCK_IMAGE = (
 class EmulatorInfo:
     image: str
     version: str
-    digest: str | None
+    digest: Optional[str]
     # service classes provisioned through the emulator's AWS API; everything
     # else falls back to the native backend
     api_backed: frozenset[str]
@@ -174,7 +176,7 @@ def _aws_service(extra_ports: bool) -> dict:
     }
 
 
-def _deployment(containers: list[dict], service_account: str | None = None) -> dict:
+def _deployment(containers: list[dict], service_account: Optional[str] = None) -> dict:
     pod_spec: dict = {"enableServiceLinks": False, "containers": containers}
     if service_account:
         pod_spec["serviceAccountName"] = service_account
@@ -203,7 +205,7 @@ def _readiness() -> dict:
 
 
 def emulator_manifests(
-    em: EmulatorSpec, namespace: str, msk_bootstrap: str | None = None
+    em: EmulatorSpec, namespace: str, msk_bootstrap: Optional[str] = None
 ) -> list[dict]:
     image = resolve_image(em)
     if em.kind == "ministack":

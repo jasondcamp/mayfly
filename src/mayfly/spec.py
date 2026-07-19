@@ -4,7 +4,7 @@ import hashlib
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -36,12 +36,12 @@ def _validate_dns_name(v: str) -> str:
 
 class EmulatorSpec(_StrictModel):
     kind: Literal["ministack", "floci"] = "ministack"
-    image: str | None = None  # default: pinned per kind (see emulators.EMULATORS)
-    version: str | None = None  # image tag; default: pinned per kind
+    image: Optional[str] = None  # default: pinned per kind (see emulators.EMULATORS)
+    version: Optional[str] = None  # image tag; default: pinned per kind
 
     @field_validator("version")
     @classmethod
-    def _no_latest(cls, v: str | None) -> str | None:
+    def _no_latest(cls, v: Optional[str]) -> Optional[str]:
         if v == "latest":
             raise ValueError("emulator.version must be a pinned tag, not 'latest'")
         return v
@@ -94,13 +94,13 @@ class ServicesSpec(_StrictModel):
 class ResourcesSpec(_StrictModel):
     cpu: str = "10m"  # request
     memory: str = "32Mi"  # request
-    cpu_limit: str | None = Field(default=None, alias="cpuLimit")
+    cpu_limit: Optional[str] = Field(default=None, alias="cpuLimit")
     memory_limit: str = Field(default="256Mi", alias="memoryLimit")
 
 
 class ReadinessSpec(_StrictModel):
     path: str = "/"
-    port: int | None = None  # default: the app's port
+    port: Optional[int] = None  # default: the app's port
     initial_delay_seconds: int = Field(default=2, alias="initialDelaySeconds", ge=0)
     period_seconds: int = Field(default=5, alias="periodSeconds", ge=1)
 
@@ -115,8 +115,8 @@ class AppSpec(_StrictModel):
     env: dict[str, str] = Field(default_factory=dict)
     secrets: list[str] = Field(default_factory=list)  # env-from these mayfly secrets
     resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
-    readiness: ReadinessSpec | None = None  # httpGet probe; omit for none
-    image_pull_secret: str | None = Field(default=None, alias="imagePullSecret")
+    readiness: Optional[ReadinessSpec] = None  # httpGet probe; omit for none
+    image_pull_secret: Optional[str] = Field(default=None, alias="imagePullSecret")
 
 
 class EnvSpec(_StrictModel):
@@ -163,7 +163,7 @@ class EnvSpec(_StrictModel):
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
-def load_spec(path: str | Path) -> EnvSpec:
+def load_spec(path: Union[str, Path]) -> EnvSpec:
     raw = yaml.safe_load(Path(path).read_text())
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: spec must be a YAML mapping")

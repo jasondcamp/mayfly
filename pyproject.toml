@@ -3,7 +3,7 @@ name = "mayfly-cli"
 version = "0.1.0"
 description = "Short lived ephemeral environments on Kubernetes: one YAML spec, an isolated namespace with emulated AWS + real service pods, TTL teardown"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = ["ephemeral-environments", "kubernetes", "preview-environments", "aws-emulator", "testing"]
@@ -12,6 +12,9 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Testing",

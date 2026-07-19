@@ -1,6 +1,7 @@
 """AWS-API provisioners backed by floci (+ kubedock for container services)."""
 
 import time
+from typing import Optional
 
 from botocore.exceptions import ClientError
 
@@ -235,7 +236,7 @@ class MskProvisioner:
         return secrets
 
     @staticmethod
-    def _find_arn(kafka, name: str) -> str | None:
+    def _find_arn(kafka, name: str) -> Optional[str]:
         clusters = kafka.list_clusters(ClusterNameFilter=name).get("ClusterInfoList", [])
         for c in clusters:
             if c.get("ClusterName") == name:

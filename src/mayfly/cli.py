@@ -1,7 +1,8 @@
 """mayfly CLI: up / down / status / list / render / reap."""
 
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 from pathlib import Path
 
 import boto3
@@ -77,8 +78,8 @@ def version():
 @app.command()
 def up(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    context: str | None = CTX_OPT,
-    kubeconfig: str | None = KCFG_OPT,
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
     pull_secret_namespace: str = typer.Option(
         "default",
         "--pull-secret-namespace",
@@ -92,7 +93,7 @@ def up(
     _say(f"environment {name} (namespace {ns}, seed {spec.seed!r}, ttl {spec.ttl})")
 
     k8s = K8s(context, kubeconfig)
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     expires = now + spec.ttl_delta
     k8s.ensure_namespace(
         ns,
@@ -148,9 +149,9 @@ def up(
 @app.command()
 def down(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    name: str | None = typer.Option(None, "--name", help="environment name instead of spec"),
-    context: str | None = CTX_OPT,
-    kubeconfig: str | None = KCFG_OPT,
+    name: Optional[str] = typer.Option(None, "--name", help="environment name instead of spec"),
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Destroy the environment (deletes its namespace)."""
     ns = f"env-{name}" if name else namespace_for(_load(spec_file).seed)
@@ -162,14 +163,14 @@ def down(
 
 
 @app.command("list")
-def list_envs(context: str | None = CTX_OPT, kubeconfig: str | None = KCFG_OPT):
+def list_envs(context: Optional[str] = CTX_OPT, kubeconfig: Optional[str] = KCFG_OPT):
     """List mayfly environments."""
     k8s = K8s(context, kubeconfig)
     namespaces = k8s.list_namespaces(f"{MANAGED_LABEL}=true")
     if not namespaces:
         typer.echo("no environments")
         return
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     rows = [("NAMESPACE", "SEED", "AGE", "EXPIRES-IN")]
     for n in namespaces:
         ann = n.metadata.annotations or {}
@@ -190,8 +191,8 @@ def list_envs(context: str | None = CTX_OPT, kubeconfig: str | None = KCFG_OPT):
 @app.command()
 def status(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    context: str | None = CTX_OPT,
-    kubeconfig: str | None = KCFG_OPT,
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Show pods and provisioned endpoints for the environment."""
     spec = _load(spec_file)
@@ -237,12 +238,12 @@ def render(
 @app.command()
 def reap(
     dry_run: bool = typer.Option(False, "--dry-run", help="report only, delete nothing"),
-    context: str | None = CTX_OPT,
-    kubeconfig: str | None = KCFG_OPT,
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Delete environments whose TTL has expired."""
     k8s = K8s(context, kubeconfig)
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     reaped = 0
     for n in k8s.list_namespaces(f"{MANAGED_LABEL}=true"):
         ann = n.metadata.annotations or {}
@@ -263,15 +264,15 @@ def reap(
 def extend(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
     ttl: str = typer.Option(..., "--ttl", help="new TTL from now, e.g. 4h"),
-    context: str | None = CTX_OPT,
-    kubeconfig: str | None = KCFG_OPT,
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
 ):
     """Push the environment's expiry out to now + TTL."""
     delta = parse_ttl(ttl)
     ns = namespace_for(_load(spec_file).seed)
     k8s = K8s(context, kubeconfig)
     _managed_namespace(k8s, ns)
-    expires = (datetime.now(UTC) + delta).isoformat()
+    expires = (datetime.now(timezone.utc) + delta).isoformat()
     k8s.core.patch_namespace(ns, {"metadata": {"annotations": {EXPIRES_AT_ANNOTATION: expires}}})
     _say(f"{ns} now expires {expires}")
 

@@ -8,10 +8,13 @@ on:
 jobs:
   unit:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.13"]  # oldest supported + newest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv venv && uv pip install -e '.[dev]'
+      - run: uv venv --python ${{ matrix.python }} && uv pip install -e '.[dev]'
       - run: uv run ruff check src tests
       - run: uv run pytest -q
 
