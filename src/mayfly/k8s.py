@@ -106,17 +106,30 @@ class K8s:
 
     # ------------------------------------------------------ deployments
     def wait_deployment(self, namespace: str, name: str, timeout: int = 180) -> None:
+        """Wait for rollout completion (kubectl rollout status semantics).
+
+        Checking available_replicas alone is not enough: during a rolling
+        update the OLD pod still counts as available, and provisioning
+        against it is work an in-memory emulator forgets seconds later.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 d = self.apps.read_namespaced_deployment(name, namespace)
-                if (d.status.available_replicas or 0) >= (d.spec.replicas or 1):
+                want = d.spec.replicas or 1
+                s = d.status
+                if (
+                    (s.observed_generation or 0) >= d.metadata.generation
+                    and (s.updated_replicas or 0) >= want
+                    and (s.available_replicas or 0) >= want
+                    and not s.unavailable_replicas
+                ):
                     return
             except ApiException as e:
                 if e.status != 404:
                     raise
             time.sleep(2)
-        raise TimeoutError(f"deployment {namespace}/{name} not available after {timeout}s")
+        raise TimeoutError(f"deployment {namespace}/{name} rollout not complete after {timeout}s")
 
     def exec_in_deployment(
         self, namespace: str, deployment: str, command: list[str], retries: int = 5

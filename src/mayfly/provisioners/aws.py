@@ -128,6 +128,50 @@ class ElastiCacheProvisioner:
             return []
 
 
+class MskHybridProvisioner:
+    """Native broker data-plane + emulator MSK control-plane registration.
+
+    MiniStack emulates the MSK control plane but not the Kafka wire protocol;
+    GetBootstrapBrokers honors MINISTACK_MSK_BOOTSTRAP (set by mayfly to the
+    natively-deployed broker's address). So: deploy the real broker natively,
+    then register the cluster through the AWS API so ListClusters /
+    DescribeCluster / GetBootstrapBrokers all answer correctly for apps.
+    """
+
+    def provision(self, items, ctx) -> dict:
+        from .native import MskNativeProvisioner
+
+        secrets = MskNativeProvisioner().provision(items, ctx)
+        kafka = ctx.session_factory().client("kafka")
+        for cluster in items:
+            ctx.progress(f"msk: {cluster.name} registering with emulator control plane")
+            arn = MskProvisioner._find_arn(kafka, cluster.name)
+            if not arn:
+                arn = kafka.create_cluster(
+                    ClusterName=cluster.name,
+                    KafkaVersion="3.5.1",
+                    NumberOfBrokerNodes=1,
+                    BrokerNodeGroupInfo={
+                        "InstanceType": "kafka.t3.small",
+                        "ClientSubnets": ["subnet-ephemeral"],
+                    },
+                )["ClusterArn"]
+
+            def state():
+                return kafka.describe_cluster(ClusterArn=arn)["ClusterInfo"]["State"]
+
+            _wait(f"msk/{cluster.name} control plane", 120, state, "ACTIVE", ctx.progress)
+            brokers = kafka.get_bootstrap_brokers(ClusterArn=arn)["BootstrapBrokerString"]
+            expected = secrets[f"msk-{cluster.name}"]["KAFKA_BROKERS"]
+            if expected not in brokers:
+                ctx.progress(
+                    f"msk: WARNING GetBootstrapBrokers returned {brokers!r}, "
+                    f"expected it to include {expected!r}"
+                )
+            ctx.progress(f"msk: {cluster.name} control plane ACTIVE, brokers {brokers}")
+        return secrets
+
+
 class MskProvisioner:
     def provision(self, items, ctx) -> dict:
         secrets = {}

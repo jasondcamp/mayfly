@@ -35,6 +35,12 @@ RHOST=$(secret elasticache-cache-a REDIS_HOST)
 "${K[@]}" run smoke-redis --rm -i --restart=Never --image=valkey/valkey:8-alpine \
   --command -- sh -c "valkey-cli -h $RHOST set smoke ok && valkey-cli -h $RHOST get smoke"
 
+echo "== msk: control-plane API sees the cluster and routes to our broker"
+"${K[@]}" run smoke-mskapi --rm -i --restart=Never --image=amazon/aws-cli:2.22.35 \
+  --env=AWS_ENDPOINT_URL=http://aws:4566 --env=AWS_ACCESS_KEY_ID=test \
+  --env=AWS_SECRET_ACCESS_KEY=test --env=AWS_DEFAULT_REGION=us-east-1 \
+  --command -- sh -c 'ARN=$(aws kafka list-clusters --query "ClusterInfoList[0].ClusterArn" --output text) && aws kafka describe-cluster --cluster-arn "$ARN" --query "ClusterInfo.[ClusterName,State]" --output text && aws kafka get-bootstrap-brokers --cluster-arn "$ARN" --output text'
+
 echo "== msk: produce/consume via KAFKA_BROKERS"
 BROKERS=$(secret msk-events KAFKA_BROKERS)
 "${K[@]}" run smoke-kafka --rm -i --restart=Never --image=redpandadata/redpanda:v24.2.18 \

@@ -20,7 +20,7 @@ Topologies (validated 2026-07-18 on k3d + kubedock):
 
 from dataclasses import dataclass
 
-from .spec import EmulatorSpec
+from .spec import EmulatorSpec, EnvSpec
 
 AWS_SERVICE = "aws"
 AWS_PORT = 4566
@@ -28,7 +28,14 @@ AWS_ENDPOINT = f"http://{AWS_SERVICE}:{AWS_PORT}"
 
 RDS_BASE_PORT = 15432
 CACHE_BASE_PORT = 16379
+KAFKA_PORT = 9092
 PORT_RANGE = 8  # per service class, pre-exposed on the aws Service
+
+
+def msk_bootstrap(spec: EnvSpec) -> str | None:
+    """Bootstrap-broker string for the natively-deployed MSK brokers."""
+    brokers = [f"msk-{m.name}:{KAFKA_PORT}" for m in spec.services.msk]
+    return ",".join(brokers) or None
 
 KUBEDOCK_IMAGE = (
     "joyrex2001/kubedock:0.22.0"
@@ -51,7 +58,10 @@ EMULATORS: dict[str, EmulatorInfo] = {
         image="ministackorg/ministack",
         version="1.4.3",
         digest="sha256:22a278f078f5f88b3437abd1a4daea101bbb1b3d5d7e35353c39029a6ade09e0",
-        api_backed=frozenset({"s3", "rds"}),
+        # msk is hybrid: control plane in ministack (MINISTACK_MSK_BOOTSTRAP
+        # routes GetBootstrapBrokers to the broker mayfly deploys natively);
+        # the Kafka wire protocol itself is served by that broker.
+        api_backed=frozenset({"s3", "rds", "msk"}),
     ),
     "floci": EmulatorInfo(
         image="floci/floci",
@@ -192,23 +202,27 @@ def _readiness() -> dict:
     }
 
 
-def emulator_manifests(em: EmulatorSpec, namespace: str) -> list[dict]:
+def emulator_manifests(
+    em: EmulatorSpec, namespace: str, msk_bootstrap: str | None = None
+) -> list[dict]:
     image = resolve_image(em)
     if em.kind == "ministack":
+        env = {
+            "DOCKER_HOST": "tcp://localhost:2475",
+            "DOCKER_NETWORK": "kubedock",
+            "MINISTACK_HOST": AWS_SERVICE,
+            "MINISTACK_RDS_PUBLIC_ENDPOINT": "1",
+            "RDS_BASE_PORT": str(RDS_BASE_PORT),
+            "ELASTICACHE_BASE_PORT": str(CACHE_BASE_PORT),
+        }
+        if msk_bootstrap:
+            # GetBootstrapBrokers answers with the broker mayfly brings
+            env["MINISTACK_MSK_BOOTSTRAP"] = msk_bootstrap
         ministack = {
             "name": "ministack",
             "image": image,
             "ports": [{"containerPort": AWS_PORT}],
-            "env": _env(
-                {
-                    "DOCKER_HOST": "tcp://localhost:2475",
-                    "DOCKER_NETWORK": "kubedock",
-                    "MINISTACK_HOST": AWS_SERVICE,
-                    "MINISTACK_RDS_PUBLIC_ENDPOINT": "1",
-                    "RDS_BASE_PORT": str(RDS_BASE_PORT),
-                    "ELASTICACHE_BASE_PORT": str(CACHE_BASE_PORT),
-                }
-            ),
+            "env": _env(env),
             "readinessProbe": _readiness(),
             "resources": {
                 "requests": {"cpu": "50m", "memory": "64Mi"},

@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth bg-[#040705] text-[#a1aba6] antialiased">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mayfly — Ephemeral environments.</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        品牌绿: '#7bc555', /* brand-green */
+                        品牌橙: '#FFB347', /* brand-orange */
+                        base: {
+                            950: '#040705', /* deep background */
+                            900: '#0a0f0c', /* panel background */
+                            800: '#131c16',
+                            700: '#1a2920', /* soft borders */
+                            border: '#152419',
+                        },
+                        text: {
+                            main: '#d1dcd6',
+                            muted: '#818e86',
+                            dim: '#526058'
+                        }
+                    },
+                    boxShadow: {
+                        'glow': '0 0 20px rgba(123, 197, 85, 0.12)',
+                        'glow-hover': '0 0 30px rgba(123, 197, 85, 0.22)',
+                    },
+                    animation: {
+                        'blink': 'blink 1s step-end infinite',
+                        'crt-flicker': 'crt 0.15s infinite',
+                    },
+                    keyframes: {
+                        blink: {
+                            '0%, 100%': { opacity: 1 },
+                            '50%': { opacity: 0 },
+                        },
+                        crt: {
+                            '0%': { opacity: 0.95 },
+                            '50%': { opacity: 1 },
+                            '100%': { opacity: 0.98 },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom UI Elements & Scrollytelling Classes */
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: theme('colors.base.950');
+            background-image:
+                radial-gradient(circle at 50% 0%, rgba(123, 197, 85, 0.03) 0%, transparent 60%),
+                radial-gradient(circle at 100% 100%, rgba(123, 197, 85, 0.02) 0%, transparent 50%);
+            background-attachment: fixed;
+        }
+
+        /* CRT Scanline Overlay */
+        .scanlines {
+            position: relative;
+        }
+        .scanlines::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.1));
+            background-size: 100% 4px;
+            z-index: 50;
+            pointer-events: none;
+            opacity: 0.25;
+        }
+
+        /* Typewriter / Terminal Animation Sequence */
+        .term-row { opacity: 0; }
+        .term-play .term-row:nth-child(1) { animation: termReveal 0.1s forwards 0.2s; }
+        .term-play .term-row:nth-child(2) { animation: termReveal 0.1s forwards 0.6s; }
+        .term-play .term-row:nth-child(3) { animation: termReveal 0.1s forwards 0.8s; } /* dashed line */
+        .term-play .term-row:nth-child(4) { animation: termReveal 0.1s forwards 1.2s; } /* namespace */
+        .term-play .term-row:nth-child(5) { animation: termReveal 0.1s forwards 2.0s; } /* postgres */
+        .term-play .term-row:nth-child(6) { animation: termReveal 0.1s forwards 2.4s; } /* redis */
+        .term-play .term-row:nth-child(7) { animation: termReveal 0.1s forwards 3.1s; } /* kafka */
+        .term-play .term-row:nth-child(8) { animation: termReveal 0.1s forwards 3.5s; } /* s3 */
+        .term-play .term-row:nth-child(9) { animation: termReveal 0.1s forwards 4.2s; } /* api */
+        .term-play .term-row:nth-child(10) { animation: termReveal 0.1s forwards 4.6s; } /* dashed */
+        .term-play .term-row:nth-child(11) { animation: termReveal 0.1s forwards 4.8s; } /* ready */
+        .term-play .term-row:nth-child(12) { animation: termReveal 0.1s forwards 5.0s; } /* context */
+        .term-play .term-row:nth-child(13) { animation: termReveal 0.1s forwards 5.2s; } /* endpoints */
+        .term-play .term-row:nth-child(14) { animation: termReveal 0.1s forwards 5.6s; } /* prompt */
+
+        @keyframes termReveal {
+            from { opacity: 0; transform: translateY(2px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Syntax Highlighting Base */
+        .hl-comment { color: theme('colors.text.dim'); }
+        .hl-key { color: theme('colors.品牌绿'); }
+        .hl-value { color: theme('colors.品牌橙'); }
+        .hl-string { color: theme('colors.text.main'); }
+
+        /* Custom Selection */
+        ::selection {
+            background: rgba(123, 197, 85, 0.2);
+            color: theme('colors.品牌绿');
+        }
+    </style>
+</head>
+<body class="scanlines min-h-screen flex flex-col selection:bg-品牌绿/20">
+
+    <main class="flex-grow max-w-6xl w-full mx-auto px-6 py-12 md:py-24 space-y-32 md:space-y-48">
+
+        <!-- ================= HERO SECTION ================= -->
+        <section class="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-12 lg:gap-8 items-center min-h-[70vh]">
+
+            <!-- Hero Typography -->
+            <div class="space-y-8 z-10">
+                <h1 class="text-6xl sm:text-7xl lg:text-[5.5rem] font-bold tracking-tight text-品牌绿 leading-[1.1] filter drop-shadow-[0_0_12px_rgba(123,197,85,0.12)]">
+                    <span class="opacity-70 font-normal">$_</span> mayfly
+                </h1>
+
+                <div class="space-y-6 max-w-xl">
+                    <p class="text-xl sm:text-2xl text-品牌绿 font-medium">
+                        Ephemeral environments. Delightfully fast.
+                    </p>
+                    <p class="text-base text-text-muted leading-relaxed">
+                        One YAML spec spins up a full isolated environment — S3, Postgres/RDS, Kafka, Redis, your apps — in an isolated Kubernetes namespace.<br><br>
+                        A TTL reaper destroys it automatically.
+                    </p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-4 pt-4">
+                    <a href="#install" class="group relative inline-flex items-center gap-2 bg-品牌绿 text-base-950 px-6 py-3 font-bold transition-all hover:bg-white hover:shadow-glow">
+                        Get started <i class="ph-bold ph-arrow-right transition-transform group-hover:translate-x-1"></i>
+                    </a>
+                    <a href="https://github.com/jasondcamp/mayfly" target="_blank" class="group inline-flex items-center gap-2 border border-base-700 bg-base-900/50 hover:border-品牌绿 hover:text-品牌绿 text-text-main px-6 py-3 font-medium transition-all">
+                        <i class="ph ph-github-logo text-xl"></i> GitHub
+                    </a>
+                </div>
+
+                <div class="flex items-center gap-2 text-sm text-text-dim pt-8">
+                    <svg class="w-6 h-6 shrink-0" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                        <ellipse cx="20" cy="24" rx="7" ry="13" fill="#7bc555" opacity="0.3" transform="rotate(-24 20 24)"/>
+                        <ellipse cx="44" cy="24" rx="7" ry="13" fill="#7bc555" opacity="0.3" transform="rotate(24 44 24)"/>
+                        <path d="M28 52 Q26 59 21 62" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                        <path d="M36 52 Q38 59 43 62" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                        <ellipse cx="32" cy="44" rx="7.5" ry="10" fill="#7bc555"/>
+                        <path d="M26 15 Q23 9 18 7" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                        <path d="M38 15 Q41 9 46 7" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                        <circle cx="32" cy="26" r="12.5" fill="#7bc555"/>
+                        <circle cx="27" cy="25" r="3.4" fill="#0a0f0c"/>
+                        <circle cx="37" cy="25" r="3.4" fill="#0a0f0c"/>
+                        <circle cx="28.2" cy="23.8" r="1.2" fill="#d1dcd6"/>
+                        <circle cx="38.2" cy="23.8" r="1.2" fill="#d1dcd6"/>
+                        <path d="M29 31 Q32 33.5 35 31" stroke="#0a0f0c" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+                    </svg>
+                    lives fast. gone by sunset.
+                </div>
+            </div>
+
+            <!-- Hero Terminal -->
+            <div class="relative z-10">
+                <!-- Terminal Glow -->
+                <div class="absolute -inset-1 bg-品牌绿/5 blur-[40px] rounded-full"></div>
+
+                <div class="relative bg-base-900 border border-base-border rounded-lg overflow-hidden shadow-2xl flex flex-col font-mono text-[13px] sm:text-sm leading-6 h-[400px]">
+                    <!-- macOS dots -->
+                    <div class="flex items-center gap-2 px-4 py-3 border-b border-base-border/50 bg-[#070b09]">
+                        <div class="w-3 h-3 rounded-full bg-[#FF5F56]"></div>
+                        <div class="w-3 h-3 rounded-full bg-[#FFBD2E]"></div>
+                        <div class="w-3 h-3 rounded-full bg-[#27C93F]"></div>
+                    </div>
+
+                    <!-- Term output -->
+                    <div id="hero-term" class="p-6 flex-grow overflow-hidden select-text text-text-main">
+                        <div class="term-row">
+                            <span class="text-品牌橙">$ mayfly up env.yaml</span>
+                        </div>
+                        <div class="term-row text-text-muted mb-4">
+                            mayfly 0.3.0 <span class="mx-2">·</span> ephemeral by design
+                        </div>
+
+                        <div class="term-row text-text-dim border-t border-dashed border-base-700 w-full my-2"></div>
+
+                        <div class="flex flex-col gap-1 w-full mb-4">
+                            <div class="term-row flex items-baseline">
+                                <span class="text-品牌绿 mr-2">✓</span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">namespace</span>
+                                <span class="flex-grow text-text-muted truncate">env-merry-blonde-stoat-f1ee</span>
+                                <span class="w-16 text-right text-text-dim">created</span>
+                                <span class="w-12 text-right text-text-muted">0.3s</span>
+                            </div>
+                            <div class="term-row flex items-baseline">
+                                <span class="text-品牌绿 mr-2">✓</span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">postgres <span class="text-text-dim">(appdb)</span></span>
+                                <span class="flex-grow"></span>
+                                <span class="w-16 text-right text-text-dim">ready</span>
+                                <span class="w-12 text-right text-text-main">5432</span>
+                                <span class="w-12 text-right text-text-muted">1.1s</span>
+                            </div>
+                            <div class="term-row flex items-baseline">
+                                <span class="text-品牌绿 mr-2">✓</span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">redis</span>
+                                <span class="flex-grow"></span>
+                                <span class="w-16 text-right text-text-dim">ready</span>
+                                <span class="w-12 text-right text-text-main">6379</span>
+                                <span class="w-12 text-right text-text-muted">1.2s</span>
+                            </div>
+                            <div class="term-row flex items-baseline">
+                                <span class="text-品牌绿 mr-2">✓</span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">kafka <span class="text-text-dim">(msk)</span></span>
+                                <span class="flex-grow"></span>
+                                <span class="w-16 text-right text-text-dim">ready</span>
+                                <span class="w-12 text-right text-text-main">9092</span>
+                                <span class="w-12 text-right text-text-muted">2.1s</span>
+                            </div>
+                            <div class="term-row flex items-baseline">
+                                <span class="text-品牌绿 mr-2">✓</span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">s3 <span class="text-text-dim">(minio)</span></span>
+                                <span class="flex-grow"></span>
+                                <span class="w-16 text-right text-text-dim">ready</span>
+                                <span class="w-12 text-right text-text-main">4566</span>
+                                <span class="w-12 text-right text-text-muted">2.3s</span>
+                            </div>
+                            <div class="term-row flex items-baseline">
+                                <span class="text-品牌绿 mr-2">✓</span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">api <span class="text-text-dim">(echo)</span></span>
+                                <span class="flex-grow"></span>
+                                <span class="w-16 text-right text-text-dim">deployed</span>
+                                <span class="w-12 text-right text-text-main">8080</span>
+                                <span class="w-12 text-right text-text-muted">4.8s</span>
+                            </div>
+                        </div>
+
+                        <div class="term-row text-text-dim border-t border-dashed border-base-700 w-full my-2"></div>
+
+                        <div class="term-row text-品牌绿 mt-2 mb-1">
+                            Environment ready in 6.2s · TTL 8h · reaper scheduled
+                        </div>
+                        <div class="term-row text-text-muted mb-1">
+                            <span class="text-text-dim block sm:inline">Context:</span> env-merry-blonde-stoat-f1ee
+                        </div>
+                        <div class="term-row text-text-muted mb-4">
+                            Endpoints written to Kubernetes Secrets
+                        </div>
+                        <div class="term-row flex items-center">
+                            <span class="text-品牌绿 mr-2">$</span>
+                            <div class="w-2.5 h-4 bg-品牌绿 animate-blink"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= FEATURES (3-UP) ================= -->
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-12 md:gap-8 pt-12 border-t border-base-border relative">
+            <!-- Line decorative -->
+            <div class="absolute -top-[1px] left-0 w-24 h-[1px] bg-品牌绿 shadow-[0_0_8px_rgba(123,197,85,0.45)]"></div>
+
+            <div class="space-y-4">
+                <div class="w-12 h-12 flex items-center justify-center rounded-sm border border-base-border bg-base-900 mb-6">
+                    <i class="ph ph-list-dashes text-2xl text-品牌绿"></i>
+                </div>
+                <h3 class="text-xl text-text-main font-semibold">One spec, full stack</h3>
+                <p class="text-sm text-text-muted leading-relaxed">
+                    Declare S3 buckets, RDS databases, ElastiCache, Kafka topics, and app deployments in one YAML file. Everything spins up together. Everything tears down together.
+                </p>
+            </div>
+
+            <div class="space-y-4">
+                <div class="w-12 h-12 flex items-center justify-center rounded-sm border border-base-border bg-base-900 mb-6">
+                    <i class="ph ph-hexagon bg-transparent text-2xl text-品牌绿"></i> <!-- Hexagon mimics k8s cluster conceptually -->
+                </div>
+                <h3 class="text-xl text-text-main font-semibold">Truly isolated</h3>
+                <p class="text-sm text-text-muted leading-relaxed">
+                    Each environment is one Kubernetes namespace, deterministically named from a seed. Teardown is namespace deletion — no leftovers, ever.
+                </p>
+            </div>
+
+            <div class="space-y-4">
+                <div class="w-12 h-12 flex items-center justify-center rounded-sm border border-base-border bg-base-900 mb-6">
+                    <i class="ph ph-clock text-2xl text-品牌绿"></i>
+                </div>
+                <h3 class="text-xl text-text-main font-semibold">Self-cleaning</h3>
+                <p class="text-sm text-text-muted leading-relaxed">
+                    TTLs on everything. <code class="text-品牌绿 bg-品牌绿/10 px-1 py-0.5 rounded text-xs">mayfly reap</code> and the reaper delete expired environments automatically. Live fast, clean fast. Leave no trace.
+                </p>
+            </div>
+        </section>
+
+        <!-- ================= HOW IT WORKS ================= -->
+        <section class="space-y-8">
+            <h2 class="text-2xl text-品牌绿">/ how it works</h2>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+
+                <!-- YAML Spec -->
+                <div class="bg-[#050706] border border-base-border rounded-lg p-6 overflow-x-auto text-[13px] leading-relaxed shadow-lg">
+                    <pre class="flex"><code class="flex-grow">
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">1</span><span class="hl-key">apiVersion</span>: <span class="hl-string">mayfly/v1alpha1</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">2</span><span class="hl-key">kind</span>: <span class="hl-string">Environment</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">3</span><span class="hl-key">metadata</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">4</span>  <span class="hl-key">seed</span>: <span class="hl-value">pr-1234</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">5</span>  <span class="hl-key">ttl</span>: <span class="hl-value">8h</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">6</span><span class="hl-key">spec</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">7</span>  <span class="hl-key">services</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">8</span>    <span class="hl-key">s3</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">9</span>      <span class="hl-key">buckets</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">10</span>        - <span class="hl-key">name</span>: <span class="hl-value">uploads</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">11</span>        - <span class="hl-key">name</span>: <span class="hl-value">assets</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">12</span>    <span class="hl-key">rds</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">13</span>      <span class="hl-key">postgres</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">14</span>        <span class="hl-key">name</span>: <span class="hl-value">appdb</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">15</span>        <span class="hl-key">version</span>: <span class="hl-string">"15"</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">16</span>    <span class="hl-key">elasticache</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">17</span>      <span class="hl-key">redis</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">18</span>        <span class="hl-key">nodeType</span>: <span class="hl-value">cache.t4g.micro</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">19</span>    <span class="hl-key">msk</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">20</span>      <span class="hl-key">topics</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">21</span>        - <span class="hl-key">name</span>: <span class="hl-value">events</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">22</span>        - <span class="hl-key">name</span>: <span class="hl-value">metrics</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">23</span>  <span class="hl-key">apps</span>:</div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">24</span>    - <span class="hl-key">name</span>: <span class="hl-value">echo</span></div>
+<div class="flex"><span class="w-8 shrink-0 text-text-dim text-right pr-4 select-none mr-2 border-r border-base-border/50">25</span>      <span class="hl-key">image</span>: <span class="hl-string">ealen/echo-server:latest</span></div></code></pre>
+                </div>
+
+                <!-- Explanations -->
+                <div class="space-y-8 py-2">
+                    <div class="space-y-2">
+                        <h4 class="text-text-main flex items-start gap-2">
+                            <span class="text-品牌绿 mt-[2px]">></span>
+                            Local emulation, cloud-compatible
+                        </h4>
+                        <p class="text-sm text-text-muted pl-5 leading-relaxed">
+                            AWS-compatible emulator running in-cluster behind <code class="text-text-main">http://aws:4566</code>. Swap it out if you like. Your apps don't care.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h4 class="text-text-main flex items-start gap-2">
+                            <span class="text-品牌绿 mt-[2px]">></span>
+                            No Docker socket. No privileged pods.
+                        </h4>
+                        <p class="text-sm text-text-muted pl-5 leading-relaxed">
+                            We don't mount your Docker socket.<br>
+                            We don't need privileged pods.<br>
+                            We don't touch real AWS.<br>
+                            Sleep well.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h4 class="text-text-main flex items-start gap-2">
+                            <span class="text-品牌绿 mt-[2px]">></span>
+                            Secrets as the contract
+                        </h4>
+                        <p class="text-sm text-text-muted pl-5 leading-relaxed">
+                            Every service's endpoints and credentials are delivered as Kubernetes Secrets. Your apps consume Secrets. That's it.
+                        </p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <h4 class="text-text-main flex items-start gap-2">
+                            <span class="text-品牌绿 mt-[2px]">></span>
+                            Deterministic naming
+                        </h4>
+                        <p class="text-sm text-text-muted pl-5 leading-relaxed">
+                            Names derived from the seed.<br>
+                            Predictable, shareable, scriptable.<br>
+                            Perfect for PRs and previews.
+                        </p>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ================= CLI REFERENCE ================= -->
+        <section class="space-y-8">
+            <h2 class="text-2xl text-品牌绿">/ cli reference</h2>
+
+            <div class="border border-base-border rounded-lg bg-base-900/30 overflow-hidden">
+                <!-- Table headers conceptual hide for cleaner look, like bash history -->
+                <div class="grid grid-cols-1 md:grid-cols-[250px_1fr] divide-y divide-base-border/50 md:divide-y-0 md:divide-x">
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm">
+                            <code class="text-品牌绿">mayfly up &lt;file.yaml&gt;</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted">
+                            Create environment from spec
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-品牌绿">mayfly status &lt;seed&gt;</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            Show status of an environment
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-品牌绿">mayfly list</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            List environments
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-品牌绿">mayfly render &lt;file.yaml&gt;</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            Render the full manifest (debug)
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-品牌绿">mayfly extend &lt;seed&gt; --ttl 4h</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            Extend TTL by 4 hours
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-品牌绿">mayfly down &lt;seed&gt;</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            Delete environment now
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-品牌绿">mayfly reap</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b-0 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            Delete expired environments
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= INSTALL ================= -->
+        <section id="install" class="space-y-6 pt-12 border-t border-base-border">
+            <h2 class="text-2xl text-品牌绿">/ install</h2>
+
+            <p class="text-sm text-text-muted">
+                Requires: kubectl + any Kubernetes cluster (k3d is plenty).
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-[3fr_1fr] gap-6">
+                <!-- Copy block -->
+                <div class="group relative flex items-center bg-base-900 border border-base-border rounded-lg p-4 font-mono text-sm hover:border-text-dim transition-colors cursor-text">
+                    <span class="text-品牌绿 mr-3">$</span>
+                    <span class="text-text-main">uv pip install mayfly</span>
+                    <button class="absolute right-4 text-text-dim hover:text-品牌绿 transition-colors" title="Copy to clipboard">
+                        <i class="ph ph-copy text-lg"></i>
+                    </button>
+                </div>
+
+                <!-- Output block (fake) -->
+                <div class="bg-[#050706] border border-base-border rounded-lg p-4 font-mono text-sm flex flex-col justify-center gap-1 opacity-70 cursor-default">
+                    <div>
+                        <span class="text-品牌橙">$</span> <span class="text-品牌绿">mayfly --version</span>
+                    </div>
+                    <div class="text-text-main flex items-center">
+                        mayfly 0.3.0 <div class="w-2 h-3.5 bg-品牌绿 ml-2 animate-blink mb-0.5"></div>
+                    </div>
+                </div>
+            </div>
+
+            <p class="text-sm text-text-dim">
+                Or: <code class="text-text-muted">pip install mayfly</code>
+            </p>
+        </section>
+
+    </main>
+
+    <!-- ================= FOOTER ================= -->
+    <footer class="w-full border-t border-base-border mt-12 py-16 text-center space-y-6">
+
+        <div class="flex items-center justify-center gap-4 text-品牌绿/30">
+            <span>------</span>
+            <svg class="w-10 h-10 drop-shadow-[0_0_6px_rgba(123,197,85,0.35)]" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                <ellipse cx="20" cy="24" rx="7" ry="13" fill="#7bc555" opacity="0.3" transform="rotate(-24 20 24)"/>
+                <ellipse cx="44" cy="24" rx="7" ry="13" fill="#7bc555" opacity="0.3" transform="rotate(24 44 24)"/>
+                <path d="M28 52 Q26 59 21 62" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                <path d="M36 52 Q38 59 43 62" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                <ellipse cx="32" cy="44" rx="7.5" ry="10" fill="#7bc555"/>
+                <path d="M26 15 Q23 9 18 7" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                <path d="M38 15 Q41 9 46 7" stroke="#7bc555" stroke-width="2.5" stroke-linecap="round"/>
+                <circle cx="32" cy="26" r="12.5" fill="#7bc555"/>
+                <circle cx="27" cy="25" r="3.4" fill="#0a0f0c"/>
+                <circle cx="37" cy="25" r="3.4" fill="#0a0f0c"/>
+                <circle cx="28.2" cy="23.8" r="1.2" fill="#d1dcd6"/>
+                <circle cx="38.2" cy="23.8" r="1.2" fill="#d1dcd6"/>
+                <path d="M29 31 Q32 33.5 35 31" stroke="#0a0f0c" stroke-width="1.6" stroke-linecap="round" fill="none"/>
+            </svg>
+            <span>-------</span>
+        </div>
+
+        <div class="text-品牌绿 font-semibold tracking-wide">
+            mayfly — ephemeral by design
+        </div>
+
+        <div class="flex items-center justify-center gap-4 text-sm text-text-dim pt-2">
+            <a href="https://github.com/jasondcamp/mayfly" target="_blank" class="hover:text-text-main transition-colors flex items-center gap-1.5">
+                <i class="ph-fill ph-github-logo text-base"></i> github.com/jasondcamp/mayfly
+            </a>
+            <span>·</span>
+            <span>MIT License</span>
+        </div>
+    </footer>
+
+    <!-- Intersection Observer & Terminal Anim Script -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Trigger hero terminal animation
+            const term = document.getElementById('hero-term');
+            if(term) {
+                setTimeout(() => {
+                    term.classList.add('term-play');
+                }, 300); // slight delay after load
+            }
+
+        });
+    </script>
+</body>
+</html>

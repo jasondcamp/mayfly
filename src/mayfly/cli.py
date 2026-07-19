@@ -16,7 +16,13 @@ from . import (
     SPEC_HASH_LABEL,
     __version__,
 )
-from .emulators import AWS_PORT, AWS_SERVICE, emulator_manifests, resolve_image
+from .emulators import (
+    AWS_PORT,
+    AWS_SERVICE,
+    emulator_manifests,
+    msk_bootstrap,
+    resolve_image,
+)
 from .k8s import K8s, summarize_pods
 from .manifests import app_manifests
 from .naming import env_name, namespace_for
@@ -97,7 +103,7 @@ def up(
     )
 
     _say(f"deploying emulator {spec.emulator.kind} ({resolve_image(spec.emulator)})")
-    k8s.apply_all(emulator_manifests(spec.emulator, ns), ns)
+    k8s.apply_all(emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)), ns)
     k8s.wait_deployment(ns, AWS_SERVICE)
 
     _say("provisioning services")
@@ -211,7 +217,7 @@ def render(
     docs = [
         {"mayfly": {"name": env_name(spec.seed), "namespace": ns, "ttl": spec.ttl,
                     "emulator": resolve_image(spec.emulator), "specHash": spec.spec_hash()}},
-        *emulator_manifests(spec.emulator, ns),
+        *emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)),
     ]
     for app_name, app_spec in spec.apps.items():
         if app_spec.enabled:

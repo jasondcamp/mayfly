@@ -23,7 +23,12 @@ from dataclasses import dataclass
 from ..emulators import api_backed_services
 from ..k8s import K8s
 from ..spec import Backend, EnvSpec
-from .aws import ElastiCacheProvisioner, MskProvisioner, RdsProvisioner, S3Provisioner
+from .aws import (
+    ElastiCacheProvisioner,
+    MskHybridProvisioner,
+    RdsProvisioner,
+    S3Provisioner,
+)
 from .native import (
     ElastiCacheNativeProvisioner,
     MskNativeProvisioner,
@@ -42,7 +47,8 @@ class ProvisionContext:
 _EMULATOR = {
     "rds": RdsProvisioner,
     "elasticache": ElastiCacheProvisioner,
-    "msk": MskProvisioner,
+    # hybrid: native broker + control-plane registration in the emulator
+    "msk": MskHybridProvisioner,
 }
 _NATIVE = {
     "rds": RdsNativeProvisioner,

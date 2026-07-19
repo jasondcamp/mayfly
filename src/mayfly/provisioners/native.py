@@ -148,10 +148,12 @@ class ElastiCacheNativeProvisioner:
 
 class MskNativeProvisioner:
     def provision(self, items, ctx) -> dict:
+        from ..emulators import KAFKA_PORT
+
         secrets = {}
         for cluster in items:
             svc = f"msk-{cluster.name}"
-            port = 9092
+            port = KAFKA_PORT
             container = {
                 "name": "redpanda",
                 "image": REDPANDA_IMAGE,

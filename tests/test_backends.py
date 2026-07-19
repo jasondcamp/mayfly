@@ -11,7 +11,8 @@ def test_auto_on_ministack():
     assert resolve_backend("auto", "rds", spec) == "emulator"
     assert resolve_backend("auto", "s3", spec) == "emulator"
     assert resolve_backend("auto", "elasticache", spec) == "native"
-    assert resolve_backend("auto", "msk", spec) == "native"
+    # msk "emulator" backend is the hybrid: native broker + control-plane registration
+    assert resolve_backend("auto", "msk", spec) == "emulator"
 
 
 def test_auto_on_floci_is_native_for_containers():

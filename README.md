@@ -22,9 +22,12 @@ socket, no privileged pods, no real AWS.
   native`). With ministack, RDS goes through the **real AWS API**:
   `create-db-instance` spawns an actual postgres container via kubedock,
   `describe-db-instances` returns a working in-cluster endpoint
-  (`aws:15432`). Services the chosen emulator can't back (ElastiCache
-  endpoints, MSK) are provisioned **natively**: valkey / Redpanda pods
-  deployed directly by mayfly with the identical Secret contract.
+  (`aws:15432`). MSK is **hybrid**: mayfly deploys a real Redpanda broker
+  natively, then registers the cluster through the MSK control-plane API —
+  `ListClusters`/`DescribeCluster` answer correctly and
+  `GetBootstrapBrokers` (via `MINISTACK_MSK_BOOTSTRAP`) returns that
+  broker. Services the chosen emulator can't back (ElastiCache endpoints)
+  are provisioned **natively** with the identical Secret contract.
 - Every service's endpoints land in a per-service Kubernetes **Secret** —
   the only contract apps consume. App pods also get `AWS_ENDPOINT_URL`
   pointing at the emulator with `test`/`test` credentials.

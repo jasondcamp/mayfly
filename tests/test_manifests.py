@@ -54,6 +54,27 @@ def test_ministack_colocates_kubedock():
     assert env["MINISTACK_RDS_PUBLIC_ENDPOINT"] == "1"
 
 
+def test_ministack_msk_bootstrap_env():
+    from mayfly.emulators import msk_bootstrap
+    from mayfly.spec import EnvSpec
+
+    spec = EnvSpec.model_validate(
+        {"seed": "x", "services": {"msk": [{"name": "events"}, {"name": "logs"}]}}
+    )
+    bootstrap = msk_bootstrap(spec)
+    assert bootstrap == "msk-events:9092,msk-logs:9092"
+    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y", bootstrap)
+    (pod,) = _pod_specs(manifests)
+    ministack = next(c for c in pod["containers"] if c["name"] == "ministack")
+    env = {e["name"]: e["value"] for e in ministack["env"]}
+    assert env["MINISTACK_MSK_BOOTSTRAP"] == bootstrap
+    # no msk in spec -> no env var
+    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y", None)
+    (pod,) = _pod_specs(manifests)
+    ministack = next(c for c in pod["containers"] if c["name"] == "ministack")
+    assert "MINISTACK_MSK_BOOTSTRAP" not in {e["name"] for e in ministack["env"]}
+
+
 def test_ministack_service_exposes_rds_ports():
     manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y")
     svc = next(m for m in manifests if m["kind"] == "Service")
