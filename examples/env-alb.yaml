@@ -1,0 +1,23 @@
+# ALB test spec: the hello app behind a real AWS ALB.
+# Requires: an EKS (or in-VPC) cluster with the AWS Load Balancer Controller
+# installed, and the hello image pushed to a registry the cluster can pull.
+apiVersion: mayfly/v1alpha1
+seed: alb-test-1
+ttl: 8h
+
+services: {}          # LB testing only; no data services needed
+
+apps:
+  hello:
+    image: <ACCOUNT>.dkr.ecr.<REGION>.amazonaws.com/mayfly-hello:latest  # push first
+    port: 8080
+    replicas: 2
+    readiness: {path: /healthz}
+    ingress:
+      host: "*"       # match any host -> test via the ALB's raw DNS name;
+                      # switch to a real hostname once Route53 is set up
+      className: alb
+      annotations:
+        alb.ingress.kubernetes.io/scheme: internet-facing   # default is internal!
+        alb.ingress.kubernetes.io/target-type: ip
+        alb.ingress.kubernetes.io/healthcheck-path: /healthz

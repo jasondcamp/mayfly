@@ -99,3 +99,18 @@ def test_dynamodb_spec():
     )
     assert spec.services.dynamodb[0].hash_key == "id"
     assert spec.services.dynamodb[1].hash_key == "cartId"
+
+
+def test_alb_spec_and_target_validation():
+    spec = EnvSpec.model_validate(
+        {
+            "seed": "x",
+            "services": {"alb": [{"name": "hello-alb", "targetApp": "hello"}]},
+            "apps": {"hello": {"image": "h:1"}},
+        }
+    )
+    assert spec.services.alb[0].target_app == "hello"
+    with pytest.raises(ValueError, match="not in apps"):
+        EnvSpec.model_validate(
+            {"seed": "x", "services": {"alb": [{"name": "a", "targetApp": "ghost"}]}}
+        )

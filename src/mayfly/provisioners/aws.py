@@ -63,6 +63,147 @@ class S3Provisioner:
         }
 
 
+class AlbProvisioner:
+    """Emulated ALB with a working data plane (patched ministack image).
+
+    Registers the target app's Service DNS name as an instance target; the
+    patched emulator proxies data-plane requests to it. Reachable at
+    http://aws:4566/_alb/<name>/ or via Host header <name>.alb.localhost.
+    """
+
+    def provision(self, items, ctx) -> dict:
+        secrets = {}
+        elbv2 = ctx.session_factory().client("elbv2")
+        for alb in items:
+            ctx.progress(f"alb: {alb.name} creating")
+            lbs = elbv2.describe_load_balancers().get("LoadBalancers", [])
+            lb = next((x for x in lbs if x["LoadBalancerName"] == alb.name), None)
+            if lb is None:
+                lb = elbv2.create_load_balancer(
+                    Name=alb.name,
+                    Subnets=["subnet-ephemeral-a", "subnet-ephemeral-b"],
+                    Scheme="internet-facing",
+                    Type="application",
+                )["LoadBalancers"][0]
+            lb_arn = lb["LoadBalancerArn"]
+
+            tg_name = f"{alb.name}-tg"
+            tgs = elbv2.describe_target_groups().get("TargetGroups", [])
+            tg = next((t for t in tgs if t["TargetGroupName"] == tg_name), None)
+            if tg is None:
+                tg = elbv2.create_target_group(
+                    Name=tg_name,
+                    Protocol="HTTP",
+                    Port=8080,
+                    TargetType="instance",
+                    VpcId="vpc-ephemeral",
+                    HealthCheckPath="/healthz",
+                )["TargetGroups"][0]
+            tg_arn = tg["TargetGroupArn"]
+
+            # target = the app's Service DNS name; kube-proxy balances pods
+            elbv2.register_targets(
+                TargetGroupArn=tg_arn,
+                Targets=[{"Id": alb.target_app, "Port": 8080}],
+            )
+
+            listeners = elbv2.describe_listeners(LoadBalancerArn=lb_arn).get(
+                "Listeners", []
+            )
+            if not listeners:
+                elbv2.create_listener(
+                    LoadBalancerArn=lb_arn,
+                    Protocol="HTTP",
+                    Port=80,
+                    DefaultActions=[{"Type": "forward", "TargetGroupArn": tg_arn}],
+                )
+
+            url = f"{AWS_ENDPOINT}/_alb/{alb.name}/"
+            ctx.progress(
+                f"alb: {alb.name} active -> {alb.target_app} (data plane {url})"
+            )
+            secrets[f"alb-{alb.name}"] = {
+                "ALB_DNS_NAME": lb["DNSName"],
+                "ALB_URL": url,
+                "ALB_HOST": f"{alb.name}.alb.localhost",
+                "ALB_TARGET_APP": alb.target_app,
+            }
+            public_url = self._expose(ctx, alb.name)
+            if public_url:
+                secrets[f"alb-{alb.name}"]["ALB_PUBLIC_URL"] = public_url
+                ctx.progress(f"alb: {alb.name} exposed at {public_url}")
+        return secrets
+
+    @staticmethod
+    def _expose(ctx, name: str):
+        """Route <name>.<namespace>.localtest.me through the cluster ingress
+        to the emulated ALB, rewriting Host to what its matcher expects.
+
+        Traefik-specific (the Host rewrite needs a Middleware); silently
+        skipped on clusters without the Traefik CRDs — there you'd use a
+        real load balancer anyway.
+        """
+        middleware_body = {
+            "kind": "Middleware",
+            "metadata": {"name": f"alb-{name}-host"},
+            "spec": {
+                "headers": {"customRequestHeaders": {"Host": f"{name}.alb.localhost"}}
+            },
+        }
+        group = None
+        for api_version in ("traefik.io/v1alpha1", "traefik.containo.us/v1alpha1"):
+            try:
+                ctx.k8s.apply(
+                    {"apiVersion": api_version, **middleware_body}, namespace=ctx.namespace
+                )
+                group = api_version
+                break
+            except Exception:
+                continue
+        if group is None:
+            ctx.progress(f"alb: {name} not exposed (no Traefik middleware CRD)")
+            return None
+
+        host = f"{name}.{ctx.namespace}.localtest.me"
+        ctx.k8s.apply(
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "Ingress",
+                "metadata": {
+                    "name": f"alb-{name}",
+                    "annotations": {
+                        "traefik.ingress.kubernetes.io/router.middlewares": (
+                            f"{ctx.namespace}-alb-{name}-host@kubernetescrd"
+                        )
+                    },
+                },
+                "spec": {
+                    "rules": [
+                        {
+                            "host": host,
+                            "http": {
+                                "paths": [
+                                    {
+                                        "path": "/",
+                                        "pathType": "Prefix",
+                                        "backend": {
+                                            "service": {
+                                                "name": "aws",
+                                                "port": {"number": 4566},
+                                            }
+                                        },
+                                    }
+                                ]
+                            },
+                        }
+                    ]
+                },
+            },
+            namespace=ctx.namespace,
+        )
+        return f"http://{host}/"
+
+
 class DynamoProvisioner:
     def provision(self, items, ctx) -> dict:
         secrets = {}

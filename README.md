@@ -119,6 +119,31 @@ in-namespace. App pods get `AWS_ENDPOINT_URL` plus whatever the listed
 secrets carry (`DATABASE_URL`, `REDIS_URL`, `KAFKA_BROKERS`, ...), and apps
 deploy only after all services are provisioned.
 
+## Internal ALBs
+
+`services.alb` gives an environment an **emulated ALB with a working data
+plane** — created through the real `elbv2` API (target groups, listeners,
+`describe-load-balancers`), with live traffic routed to the target app:
+
+```yaml
+services:
+  alb:
+    - name: hello-alb
+      targetApp: hello   # must be one of apps:
+```
+
+Requests to `http://aws:4566/_alb/hello-alb/` (or Host header
+`hello-alb.alb.localhost`) proxy through the ALB to the app with ALB-style
+`X-Forwarded-*` and `X-Amzn-Trace-Id` headers; the `alb-<name>` secret
+carries `ALB_URL`/`ALB_DNS_NAME`. This requires mayfly's patched emulator
+image (`ghcr.io/jasondcamp/mayfly-ministack`, source in `emulator/`) — upstream
+MiniStack's ALB data plane forwards to Lambda targets only; the one-file
+patch (`emulator/patches/alb.py`) adds HTTP proxying for `instance`/`ip`
+targets and is a candidate for an upstream PR. Path-pattern/host-header
+listener rules, redirects, and fixed-responses all come from upstream and
+work against the same data plane. For real AWS ALBs later, apps take
+`ingress: {className: alb, annotations: {...}}` (see `examples/env-alb.yaml`).
+
 ## dragonfly — the connectivity verifier
 
 `dragonfly/` is a small companion app that proves an environment's wiring
@@ -137,9 +162,12 @@ connectivity test. It's also a standing fidelity test of the emulator's
 discovery APIs: if a `describe-*` call returns an endpoint that doesn't
 work, dragonfly is the first to know.
 
+Published as `ghcr.io/jasondcamp/mayfly-dragonfly` (multi-arch; siblings:
+`mayfly-hello`, `mayfly-ministack` — `scripts/publish-images.sh` builds and
+pushes all three). Clusters pull them directly; for local iteration the e2e
+script builds the working tree under the same names and imports them.
+
 ```bash
-docker build -t dragonfly:dev dragonfly/
-k3d image import dragonfly:dev -c mayfly-dev
 mayfly up examples/env.yaml
 kubectl -n <namespace> port-forward svc/dragonfly 8080:8080  # then open http://localhost:8080
 ```

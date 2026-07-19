@@ -160,6 +160,19 @@ def check_dynamo(ddb, table):
     return _check(run)
 
 
+def check_alb(name):
+    def run():
+        import urllib.request
+
+        url = f"{os.environ['AWS_ENDPOINT_URL']}/_alb/{name}/"
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            code = resp.status
+        assert code < 500, f"data plane returned HTTP {code}"
+        return f"HTTP {code} through the ALB data plane (/_alb/{name}/)"
+
+    return _check(run)
+
+
 def run_all():
     """Discover via the AWS control plane, then verify each instance."""
     report = {}
@@ -228,11 +241,19 @@ def run_all():
             r["status"] = "available"  # s3 has no lifecycle status
             report[b["Name"]] = r
 
+    def alb():
+        for lb in _aws("elbv2").describe_load_balancers().get("LoadBalancers", []):
+            r = check_alb(lb["LoadBalancerName"])
+            r["kind"] = "alb"
+            r["status"] = lb.get("State", {}).get("Code", "unknown").lower()
+            report[lb["LoadBalancerName"]] = r
+
     _try("rds", rds)
     _try("elasticache", elasticache)
     _try("msk", msk)
     _try("dynamodb", dynamodb)
     _try("s3", s3)
+    _try("alb", alb)
     return report
 
 
@@ -297,10 +318,10 @@ PAGE = """<!doctype html>
 <div class="tiles" id="tiles"></div>
 <footer>Auto-refreshes every 5s · <a href="/api">JSON</a> · <span id="stamp"></span></footer>
 <script>
-const ORDER = ["rds", "elasticache", "msk", "dynamodb", "s3"];
+const ORDER = ["alb", "rds", "elasticache", "msk", "dynamodb", "s3"];
 const TITLES = { rds: ["RDS", "postgres"], elasticache: ["ELASTICACHE", "redis"],
                  msk: ["MSK", "kafka"], dynamodb: ["DYNAMODB", "dynamo"],
-                 s3: ["S3", "buckets"] };
+                 s3: ["S3", "buckets"], alb: ["ALB", "elbv2"] };
 const SLOW_MS = 1000;
 function row(label, c) {
   const slow = c.ok && c.ms >= SLOW_MS;

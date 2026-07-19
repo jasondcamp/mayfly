@@ -144,6 +144,15 @@ def up(
 ):
     """Create or update the environment described by the spec."""
     spec = _load(spec_file, seed)
+    if spec.services.alb and spec.emulator.image is None:
+        typer.echo(
+            "error: services.alb requires an emulator with the ALB HTTP data plane; "
+            "the stock ministack image routes ALB traffic to Lambda targets only.\n"
+            "Select mayfly's patched image in the spec:\n"
+            "  emulator: {image: ghcr.io/jasondcamp/mayfly-ministack, version: \"0.1.3\"}",
+            err=True,
+        )
+        raise typer.Exit(1)
     name = env_name(spec.seed)
     ns = namespace_for(spec.seed, spec.namespace_prefix)
     _say(f"environment {name} (namespace {ns}, seed {spec.seed!r}, ttl {spec.ttl})")
@@ -202,6 +211,11 @@ def up(
         if app_spec.ingress:
             host = app_ingress_host(app_name, app_spec, ns)
             typer.echo(f"  {app_name.capitalize() + ':':<10} http://{host}/  (cluster ingress, port 80)")
+    for alb in spec.services.alb:
+        typer.echo(
+            f"  {'ALB ' + alb.name + ':':<10} http://{alb.name}.{ns}.localtest.me/  "
+            f"(load-balanced -> {alb.target_app})"
+        )
     typer.echo(f"  Secrets:   kubectl -n {ns} get secrets")
     typer.echo(f"  AWS API:   kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
     typer.echo(f"  Teardown:  mayfly down {spec_file}")

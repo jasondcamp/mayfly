@@ -24,6 +24,7 @@ from ..emulators import api_backed_services
 from ..k8s import K8s
 from ..spec import Backend, EnvSpec
 from .aws import (
+    AlbProvisioner,
     DynamoProvisioner,
     ElastiCacheProvisioner,
     MskHybridProvisioner,
@@ -51,6 +52,7 @@ _EMULATOR = {
     # hybrid: native broker + control-plane registration in the emulator
     "msk": MskHybridProvisioner,
     "dynamodb": DynamoProvisioner,  # in-process; no native backend exists
+    "alb": AlbProvisioner,  # needs the patched ministack image (data plane)
 }
 _NATIVE = {
     "rds": RdsNativeProvisioner,
@@ -74,6 +76,7 @@ def provision_all(spec: EnvSpec, ctx: ProvisionContext) -> dict[str, dict[str, s
         ("elasticache", spec.services.elasticache),
         ("msk", spec.services.msk),
         ("dynamodb", spec.services.dynamodb),
+        ("alb", spec.services.alb),
     ):
         for backend in ("emulator", "native"):
             chosen = [i for i in items if resolve_backend(i.backend, svc_class, spec) == backend]

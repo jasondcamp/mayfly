@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal, Optional, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 API_VERSION = "mayfly/v1alpha1"
 DEFAULT_TTL = "8h"
@@ -92,12 +92,21 @@ class DynamoSpec(_StrictModel):
     _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
 
 
+class AlbSpec(_StrictModel):
+    name: str
+    target_app: str = Field(alias="targetApp")  # app (from apps:) to route to
+    backend: Backend = "auto"  # emulator-only (patched ministack data plane)
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+
 class ServicesSpec(_StrictModel):
     s3: S3Spec = Field(default_factory=S3Spec)
     rds: list[RdsSpec] = Field(default_factory=list)
     elasticache: list[ElastiCacheSpec] = Field(default_factory=list)
     msk: list[MskSpec] = Field(default_factory=list)
     dynamodb: list[DynamoSpec] = Field(default_factory=list)
+    alb: list[AlbSpec] = Field(default_factory=list)
 
 
 class ResourcesSpec(_StrictModel):
@@ -132,8 +141,11 @@ SecretRef = Union[str, SecretRefSpec]
 
 
 class AppIngressSpec(_StrictModel):
-    host: Optional[str] = None  # default: <app>.<namespace>.localtest.me
+    # default: <app>.<namespace>.localtest.me; "*" matches any host (useful
+    # for hitting an ALB's raw DNS name before real DNS exists)
+    host: Optional[str] = None
     class_name: Optional[str] = Field(default=None, alias="className")
+    annotations: dict[str, str] = Field(default_factory=dict)  # e.g. alb.ingress.kubernetes.io/*
 
 
 class AppSpec(_StrictModel):
@@ -197,6 +209,15 @@ class EnvSpec(_StrictModel):
         for name in v:
             _validate_dns_name(name)
         return v
+
+    @model_validator(mode="after")
+    def _check_alb_targets(self) -> "EnvSpec":
+        for alb in self.services.alb:
+            if alb.target_app not in self.apps:
+                raise ValueError(
+                    f"alb {alb.name!r}: targetApp {alb.target_app!r} is not in apps"
+                )
+        return self
 
     @property
     def ttl_delta(self) -> timedelta:

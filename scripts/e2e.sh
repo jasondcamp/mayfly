@@ -26,10 +26,14 @@ k3d cluster create "$CLUSTER" \
   --wait --timeout 180s
 KC=$(k3d kubeconfig write "$CLUSTER")
 
-echo "==> building + importing dragonfly (connectivity verifier) + hello (LB test app)"
-docker build -q -t dragonfly:dev dragonfly/
-docker build -q -t hello:dev hello/
-k3d image import dragonfly:dev hello:dev -c "$CLUSTER"
+# Build the images locally under their published names and import them, so
+# e2e always tests the working tree (the cluster never needs to pull).
+V=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+echo "==> building + importing mayfly images (dragonfly, hello, ministack) at ${V}"
+docker build -q -t ghcr.io/jasondcamp/mayfly-dragonfly:${V} dragonfly/
+docker build -q -t ghcr.io/jasondcamp/mayfly-hello:${V} hello/
+docker build -q -t ghcr.io/jasondcamp/mayfly-ministack:${V} emulator/
+k3d image import ghcr.io/jasondcamp/mayfly-dragonfly:${V} ghcr.io/jasondcamp/mayfly-hello:${V} ghcr.io/jasondcamp/mayfly-ministack:${V} -c "$CLUSTER"
 
 echo "==> mayfly up"
 uv run mayfly up "$SPEC" --kubeconfig "$KC"

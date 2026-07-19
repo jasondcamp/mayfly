@@ -63,7 +63,7 @@ EMULATORS: dict[str, EmulatorInfo] = {
         # msk is hybrid: control plane in ministack (MINISTACK_MSK_BOOTSTRAP
         # routes GetBootstrapBrokers to the broker mayfly deploys natively);
         # the Kafka wire protocol itself is served by that broker.
-        api_backed=frozenset({"s3", "rds", "elasticache", "msk", "dynamodb"}),
+        api_backed=frozenset({"s3", "rds", "elasticache", "msk", "dynamodb", "alb"}),
     ),
     "floci": EmulatorInfo(
         image="floci/floci",

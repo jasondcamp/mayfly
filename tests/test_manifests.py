@@ -189,3 +189,25 @@ def test_app_secret_prefixes():
         {"secretRef": {"name": "rds-appdb"}},
         {"secretRef": {"name": "elasticache-cache-a"}, "prefix": "CACHE_A_"},
     ]
+
+
+def test_app_ingress_alb_shape():
+    manifests = app_manifests(
+        "hello",
+        AppSpec(
+            image="h:1",
+            ingress={
+                "host": "*",
+                "className": "alb",
+                "annotations": {"alb.ingress.kubernetes.io/scheme": "internet-facing"},
+            },
+        ),
+        "ns1",
+    )
+    ing = next(m for m in manifests if m["kind"] == "Ingress")
+    assert "host" not in ing["spec"]["rules"][0]  # "*" -> match any host
+    assert ing["spec"]["ingressClassName"] == "alb"
+    assert (
+        ing["metadata"]["annotations"]["alb.ingress.kubernetes.io/scheme"]
+        == "internet-facing"
+    )

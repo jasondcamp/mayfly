@@ -92,31 +92,31 @@ def app_manifests(name: str, app: AppSpec, namespace: str) -> list[dict]:
         },
     ]
     if app.ingress:
-        spec: dict = {
-            "rules": [
-                {
-                    "host": app_ingress_host(name, app, namespace),
-                    "http": {
-                        "paths": [
-                            {
-                                "path": "/",
-                                "pathType": "Prefix",
-                                "backend": {
-                                    "service": {"name": name, "port": {"number": 8080}}
-                                },
-                            }
-                        ]
-                    },
-                }
-            ]
+        host = app_ingress_host(name, app, namespace)
+        rule: dict = {
+            "http": {
+                "paths": [
+                    {
+                        "path": "/",
+                        "pathType": "Prefix",
+                        "backend": {"service": {"name": name, "port": {"number": 8080}}},
+                    }
+                ]
+            }
         }
+        if host != "*":  # "*" = match any host (e.g. an ALB's raw DNS name)
+            rule["host"] = host
+        spec: dict = {"rules": [rule]}
         if app.ingress.class_name:
             spec["ingressClassName"] = app.ingress.class_name
+        metadata: dict = {"name": name}
+        if app.ingress.annotations:
+            metadata["annotations"] = app.ingress.annotations
         manifests.append(
             {
                 "apiVersion": "networking.k8s.io/v1",
                 "kind": "Ingress",
-                "metadata": {"name": name},
+                "metadata": metadata,
                 "spec": spec,
             }
         )

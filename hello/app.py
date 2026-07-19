@@ -59,7 +59,7 @@ def info(handler):
     fwd = {
         k: v
         for k, v in handler.headers.items()
-        if k.lower().startswith(("x-forwarded", "x-real-ip", "via", "forwarded"))
+        if k.lower().startswith(("x-forwarded", "x-real-ip", "x-amzn", "via", "forwarded"))
     }
     return {
         "pod": POD,
