@@ -22,15 +22,23 @@ socket, no privileged pods, no real AWS.
   native`). With ministack, RDS goes through the **real AWS API**:
   `create-db-instance` spawns an actual postgres container via kubedock,
   `describe-db-instances` returns a working in-cluster endpoint
-  (`aws:15432`). MSK is **hybrid**: mayfly deploys a real Redpanda broker
-  natively, then registers the cluster through the MSK control-plane API —
-  `ListClusters`/`DescribeCluster` answer correctly and
-  `GetBootstrapBrokers` (via `MINISTACK_MSK_BOOTSTRAP`) returns that
-  broker. Services the chosen emulator can't back (ElastiCache endpoints)
-  are provisioned **natively** with the identical Secret contract.
+  (`aws:15432`). ElastiCache works the same way (`aws:16379`). MSK is
+  **hybrid**: mayfly deploys a real Redpanda broker natively, then registers
+  the cluster through the MSK control-plane API — `ListClusters`/
+  `DescribeCluster` answer correctly and `GetBootstrapBrokers` (via
+  `MINISTACK_MSK_BOOTSTRAP`) returns that broker. Anything the chosen
+  emulator can't back falls to the **native** backend (all container
+  services on floci) with the identical Secret contract.
 - Every service's endpoints land in a per-service Kubernetes **Secret** —
-  the only contract apps consume. App pods also get `AWS_ENDPOINT_URL`
-  pointing at the emulator with `test`/`test` credentials.
+  the only contract apps consume. Endpoints are uniform across backends:
+  always `servicename:standard-port` (`rds-appdb:5432`,
+  `elasticache-cache-a:6379`, `msk-events:9092`). For emulator-backed
+  services mayfly creates that Service selecting the kubedock-spawned pod
+  directly (label selectors `dbid`/`clusterid`), so data traffic goes
+  pod-to-pod and survives emulator restarts, while the AWS API's own
+  `aws:<published-port>` answer stays valid through the reverse-proxy. App
+  pods also get `AWS_ENDPOINT_URL` pointing at the emulator with
+  `test`/`test` credentials.
 
 ## Install
 
@@ -132,12 +140,23 @@ than single-node k3d — pointed at a dedicated kubeconfig/context.
 - **MiniStack + kubedock must share a pod.** MiniStack's container readiness
   checks and port bindings assume the Docker daemon is on its own localhost;
   colocating kubedock in the same pod makes that literally true. Combined
-  with `DOCKER_NETWORK`, `MINISTACK_RDS_PUBLIC_ENDPOINT=1` and
-  `MINISTACK_HOST=aws`, `describe-db-instances` advertises `aws:<port>` —
-  an endpoint that actually works from any pod in the namespace.
-- MiniStack's ElastiCache advertises the Docker container name
-  (`redis:6379`), which doesn't resolve in-cluster and has no public-endpoint
-  knob — hence the native backend for caches until that changes upstream.
+  with `MINISTACK_RDS_PUBLIC_ENDPOINT=1` and `MINISTACK_HOST=aws`,
+  `describe-db-instances` advertises `aws:<port>` — an endpoint that
+  actually works from any pod in the namespace. Note the RDS public-endpoint
+  flag is load-bearing twice over: besides host-published ports and
+  localhost readiness, it short-circuits Docker-network detection entirely
+  (`_get_ministack_network()` returns None), which is why RDS never hits the
+  `network kubedock not found` failure that sinks ElastiCache.
+- **`DOCKER_NETWORK` must stay unset for MiniStack under kubedock.** Setting
+  it forces ElastiCache down the network-attach path, which kubedock rejects
+  (`network kubedock not found`) → MiniStack silently falls back to
+  advertising its compose-sidecar default `redis:6379` (and even with the
+  network pre-created via kubedock's `/networks/create`, the network path
+  advertises kubedock's fake container IP `127.0.0.1`). With the variable
+  unset, ElastiCache takes the published-port branch and advertises
+  `MINISTACK_HOST:16379+` — which resolves and works in-cluster. RDS is
+  indifferent either way: its `PUBLIC_ENDPOINT` mode short-circuits network
+  detection entirely.
 - Every pod sets `enableServiceLinks: false`: the `aws` Service otherwise
   injects `AWS_PORT=tcp://...`-style env vars, and Quarkus-based emulators
   (floci) fatally misparse the analogous `FLOCI_PORT` as an int property.

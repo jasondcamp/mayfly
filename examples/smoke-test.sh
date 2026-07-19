@@ -30,10 +30,18 @@ DB_URL=$(secret rds-appdb DATABASE_URL)
   --command -- psql "$DB_URL" -c \
   'create table if not exists smoke(v text); insert into smoke values ('"'"'ok'"'"'); select count(*) from smoke;'
 
-echo "== elasticache: SET/GET via REDIS_HOST"
+echo "== elasticache: control-plane API sees the cluster"
+"${K[@]}" run smoke-ecapi --rm -i --restart=Never --image=amazon/aws-cli:2.22.35 \
+  --env=AWS_ENDPOINT_URL=http://aws:4566 --env=AWS_ACCESS_KEY_ID=test \
+  --env=AWS_SECRET_ACCESS_KEY=test --env=AWS_DEFAULT_REGION=us-east-1 \
+  --command -- aws elasticache describe-cache-clusters --show-cache-node-info \
+  --query 'CacheClusters[].[CacheClusterId,CacheClusterStatus,CacheNodes[0].Endpoint.Address,CacheNodes[0].Endpoint.Port]' --output text
+
+echo "== elasticache: SET/GET via REDIS_HOST:REDIS_PORT"
 RHOST=$(secret elasticache-cache-a REDIS_HOST)
+RPORT=$(secret elasticache-cache-a REDIS_PORT)
 "${K[@]}" run smoke-redis --rm -i --restart=Never --image=valkey/valkey:8-alpine \
-  --command -- sh -c "valkey-cli -h $RHOST set smoke ok && valkey-cli -h $RHOST get smoke"
+  --command -- sh -c "valkey-cli -h $RHOST -p $RPORT set smoke ok && valkey-cli -h $RHOST -p $RPORT get smoke"
 
 echo "== msk: control-plane API sees the cluster and routes to our broker"
 "${K[@]}" run smoke-mskapi --rm -i --restart=Never --image=amazon/aws-cli:2.22.35 \

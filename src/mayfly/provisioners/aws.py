@@ -10,6 +10,24 @@ DB_USER = "app"
 DB_PASSWORD = "apppass"  # POC parity; per-env generated credentials are planned
 
 
+def _direct_service(name: str, selector: dict[str, str], port: int) -> dict:
+    """Service selecting the kubedock-spawned pod directly.
+
+    Gives emulator-backed services the same ``servicename:standard-port``
+    contract as the native backend, with data traffic going pod-to-pod
+    instead of through the aws pod's reverse-proxy (and surviving emulator
+    restarts). kubedock copies the container labels ministack sets (dbid /
+    clusterid) onto the spawned pod, which is what makes this selectable.
+    The aws:<published-port> endpoint remains valid for AWS-API fidelity.
+    """
+    return {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": name},
+        "spec": {"selector": selector, "ports": [{"port": port, "targetPort": port}]},
+    }
+
+
 def _wait(label: str, timeout_s: int, poll, want, progress, interval: int = 2):
     """Poll `poll()` until it returns `want` or timeout. Returns last value."""
     deadline = time.monotonic() + timeout_s
@@ -69,13 +87,21 @@ class RdsProvisioner:
 
             _wait(f"rds/{db.name}", 480, status, "available", ctx.progress)
             inst = self._instances(rds, db.name)[0]
-            host = inst["Endpoint"]["Address"]
-            port = str(inst["Endpoint"]["Port"])
-            ctx.progress(f"rds: {db.name} available at {host}:{port}")
-            secrets[f"rds-{db.name}"] = {
-                "DATABASE_URL": f"{db.scheme}://{DB_USER}:{DB_PASSWORD}@{host}:{port}/{db.db_name}",
-                "DB_HOST": host,
-                "DB_PORT": port,
+            api_host = inst["Endpoint"]["Address"]
+            api_port = inst["Endpoint"]["Port"]
+            svc = f"rds-{db.name}"
+            port = 5432 if db.engine == "postgres" else 3306
+            ctx.k8s.apply(
+                _direct_service(svc, {"ministack": "rds", "dbid": db.name}, port),
+                namespace=ctx.namespace,
+            )
+            ctx.progress(
+                f"rds: {db.name} available at {svc}:{port} (AWS API: {api_host}:{api_port})"
+            )
+            secrets[svc] = {
+                "DATABASE_URL": f"{db.scheme}://{DB_USER}:{DB_PASSWORD}@{svc}:{port}/{db.db_name}",
+                "DB_HOST": svc,
+                "DB_PORT": str(port),
                 "DB_USER": DB_USER,
                 "DB_PASSWORD": DB_PASSWORD,
                 "DB_NAME": db.db_name,
@@ -111,12 +137,21 @@ class ElastiCacheProvisioner:
             _wait(f"elasticache/{cache.name}", 240, status, "available", ctx.progress)
             r = ec.describe_cache_clusters(CacheClusterId=cache.name, ShowCacheNodeInfo=True)
             node = r["CacheClusters"][0]["CacheNodes"][0]["Endpoint"]
-            host, port = node["Address"], str(node["Port"])
-            ctx.progress(f"elasticache: {cache.name} available at {host}:{port}")
-            secrets[f"elasticache-{cache.name}"] = {
-                "REDIS_URL": f"redis://{host}:{port}",
-                "REDIS_HOST": host,
-                "REDIS_PORT": port,
+            api_host, api_port = node["Address"], node["Port"]
+            svc = f"elasticache-{cache.name}"
+            port = 6379
+            ctx.k8s.apply(
+                _direct_service(svc, {"ministack": "elasticache", "clusterid": cache.name}, port),
+                namespace=ctx.namespace,
+            )
+            ctx.progress(
+                f"elasticache: {cache.name} available at {svc}:{port} "
+                f"(AWS API: {api_host}:{api_port})"
+            )
+            secrets[svc] = {
+                "REDIS_URL": f"redis://{svc}:{port}",
+                "REDIS_HOST": svc,
+                "REDIS_PORT": str(port),
             }
         return secrets
 

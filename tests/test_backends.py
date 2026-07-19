@@ -10,7 +10,7 @@ def test_auto_on_ministack():
     spec = _spec("ministack")
     assert resolve_backend("auto", "rds", spec) == "emulator"
     assert resolve_backend("auto", "s3", spec) == "emulator"
-    assert resolve_backend("auto", "elasticache", spec) == "native"
+    assert resolve_backend("auto", "elasticache", spec) == "emulator"
     # msk "emulator" backend is the hybrid: native broker + control-plane registration
     assert resolve_backend("auto", "msk", spec) == "emulator"
 

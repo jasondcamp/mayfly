@@ -61,7 +61,7 @@ EMULATORS: dict[str, EmulatorInfo] = {
         # msk is hybrid: control plane in ministack (MINISTACK_MSK_BOOTSTRAP
         # routes GetBootstrapBrokers to the broker mayfly deploys natively);
         # the Kafka wire protocol itself is served by that broker.
-        api_backed=frozenset({"s3", "rds", "msk"}),
+        api_backed=frozenset({"s3", "rds", "elasticache", "msk"}),
     ),
     "floci": EmulatorInfo(
         image="floci/floci",
@@ -207,9 +207,13 @@ def emulator_manifests(
 ) -> list[dict]:
     image = resolve_image(em)
     if em.kind == "ministack":
+        # DOCKER_NETWORK is deliberately NOT set: RDS public-endpoint mode
+        # ignores it, and setting it forces ElastiCache down the
+        # network-attach path that kubedock rejects. Without it, both
+        # services take the published-port branch and advertise
+        # MINISTACK_HOST:<base_port+n> — reachable via the aws Service.
         env = {
             "DOCKER_HOST": "tcp://localhost:2475",
-            "DOCKER_NETWORK": "kubedock",
             "MINISTACK_HOST": AWS_SERVICE,
             "MINISTACK_RDS_PUBLIC_ENDPOINT": "1",
             "RDS_BASE_PORT": str(RDS_BASE_PORT),

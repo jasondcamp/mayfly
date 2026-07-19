@@ -52,6 +52,9 @@ def test_ministack_colocates_kubedock():
     assert env["DOCKER_HOST"] == "tcp://localhost:2475"
     assert env["MINISTACK_HOST"] == AWS_SERVICE
     assert env["MINISTACK_RDS_PUBLIC_ENDPOINT"] == "1"
+    # DOCKER_NETWORK must stay unset: it forces ElastiCache down the
+    # network-attach path kubedock rejects (and RDS public mode ignores it)
+    assert "DOCKER_NETWORK" not in env
 
 
 def test_ministack_msk_bootstrap_env():
