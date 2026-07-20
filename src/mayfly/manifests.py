@@ -53,6 +53,8 @@ def app_manifests(name: str, app: AppSpec, namespace: str) -> list[dict]:
             "initialDelaySeconds": app.readiness.initial_delay_seconds,
             "periodSeconds": app.readiness.period_seconds,
         }
+        if app.readiness.timeout_seconds:
+            container["readinessProbe"]["timeoutSeconds"] = app.readiness.timeout_seconds
     if app.secrets:
         env_from = []
         for ref in app.secrets:

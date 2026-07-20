@@ -24,7 +24,8 @@ import json
 import os
 import time
 import uuid
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PORT = int(os.environ.get("PORT", "8080"))
 # mayfly's provisioner defaults; AWS APIs never return passwords
@@ -282,6 +283,23 @@ def run_all():
     return report
 
 
+_cache_lock = threading.Lock()
+_cache = {"at": 0.0, "report": None}
+CACHE_TTL = 5.0
+
+
+def cached_report():
+    """run_all(), memoized briefly so kubelet probes and page refreshes
+    don't each trigger a full round-trip sweep."""
+    with _cache_lock:
+        if _cache["report"] is not None and time.monotonic() - _cache["at"] < CACHE_TTL:
+            return _cache["report"]
+    report = run_all()
+    with _cache_lock:
+        _cache.update(at=time.monotonic(), report=report)
+    return report
+
+
 def healthy(report):
     return bool(report) and all(c.get("ok") for c in report.values())
 
@@ -401,7 +419,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/":
             body, code, ctype = PAGE.encode(), 200, "text/html; charset=utf-8"
         else:
-            report = run_all()
+            report = cached_report()
             if self.path == "/healthz":
                 code = 200 if healthy(report) else 503
                 body = b"ok\n" if code == 200 else b"unhealthy\n"
@@ -413,11 +431,14 @@ class Handler(BaseHTTPRequestHandler):
                     + b"\n"
                 )
                 ctype = "application/json"
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # probe/client gave up before the response was ready
 
     def log_message(self, fmt, *args):
         print(f"{self.address_string()} {fmt % args}", flush=True)
@@ -426,4 +447,4 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     print(f"dragonfly starting on :{PORT}", flush=True)
     print(json.dumps({"startup_checks": run_all()}, indent=2), flush=True)
-    HTTPServer(("", PORT), Handler).serve_forever()
+    ThreadingHTTPServer(("", PORT), Handler).serve_forever()

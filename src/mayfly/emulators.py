@@ -152,8 +152,11 @@ def _kubedock_container() -> dict:
         ],
         "ports": [{"containerPort": 2475}],
         "resources": {
-            "requests": {"cpu": "25m", "memory": "32Mi"},
-            "limits": {"memory": "256Mi"},
+            "requests": {"cpu": "25m", "memory": "64Mi"},
+            # kubedock holds every reverse-proxy listener + container
+            # bookkeeping in memory; 256Mi got OOMKilled after ~1 day,
+            # which silently severs all aws:<port> data planes
+            "limits": {"memory": "768Mi"},
         },
     }
 

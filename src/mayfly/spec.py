@@ -133,6 +133,7 @@ class ReadinessSpec(_StrictModel):
     port: Optional[int] = None  # default: the app's port
     initial_delay_seconds: int = Field(default=2, alias="initialDelaySeconds", ge=0)
     period_seconds: int = Field(default=5, alias="periodSeconds", ge=1)
+    timeout_seconds: Optional[int] = Field(default=None, alias="timeoutSeconds", ge=1)
 
 
 class SecretRefSpec(_StrictModel):
