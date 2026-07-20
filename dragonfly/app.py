@@ -84,14 +84,16 @@ def check_memcached(node):
 
         host, port = node["Address"], node["Port"]
         c = Client((host, int(port)), connect_timeout=5, timeout=5)
-        token = str(uuid.uuid4())
-        key = f"dragonfly-{token[:8]}"
-        c.set(key, token, expire=60)
-        got = c.get(key)
-        assert got is not None and got.decode() == token, f"set/get mismatch: {got!r}"
-        c.delete(key)
-        c.close()
-        return f"memcached set/get round-trip ok via {host}:{port}"
+        try:
+            token = str(uuid.uuid4())
+            key = f"dragonfly-{token[:8]}"
+            c.set(key, token, expire=60)
+            got = c.get(key)
+            assert got is not None and got.decode() == token, f"set/get mismatch: {got!r}"
+            c.delete(key)
+            return f"memcached set/get round-trip ok via {host}:{port}"
+        finally:
+            c.close()  # ALWAYS: leaked conns exhaust memcached's 1024 limit
 
     return _check(run)
 
@@ -102,13 +104,16 @@ def check_redis(node):
 
         host, port = node["Address"], node["Port"]
         r = redis.Redis(host=host, port=port, socket_timeout=5, socket_connect_timeout=5)
-        token = str(uuid.uuid4())
-        key = f"dragonfly:{token}"
-        r.set(key, token, ex=60)
-        got = r.get(key)
-        assert got is not None and got.decode() == token, f"SET/GET mismatch: {got!r}"
-        r.delete(key)
-        return f"SET/GET round-trip ok via {host}:{port}"
+        try:
+            token = str(uuid.uuid4())
+            key = f"dragonfly:{token}"
+            r.set(key, token, ex=60)
+            got = r.get(key)
+            assert got is not None and got.decode() == token, f"SET/GET mismatch: {got!r}"
+            r.delete(key)
+            return f"SET/GET round-trip ok via {host}:{port}"
+        finally:
+            r.close()
 
     return _check(run)
 
@@ -230,9 +235,10 @@ def run_all():
                 r = check_redis(nodes[0]["Endpoint"])
             r["kind"] = "elasticache"
             r["status"] = c.get("CacheClusterStatus", "unknown").lower()
-            r["detail"] = r.get("detail", "") and (
-                f"{engine} {c.get('EngineVersion', '')}: " + r["detail"]
-            )
+            if r.get("detail"):
+                r["detail"] = f"{engine} {c.get('EngineVersion', '')}: " + r["detail"]
+            else:
+                r.pop("detail", None)
             report[c["CacheClusterId"]] = r
 
     def msk():
