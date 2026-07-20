@@ -77,6 +77,24 @@ def check_postgres(inst):
     return _check(run)
 
 
+def check_memcached(node):
+    def run():
+        from pymemcache.client.base import Client
+
+        host, port = node["Address"], node["Port"]
+        c = Client((host, int(port)), connect_timeout=5, timeout=5)
+        token = str(uuid.uuid4())
+        key = f"dragonfly-{token[:8]}"
+        c.set(key, token, expire=60)
+        got = c.get(key)
+        assert got is not None and got.decode() == token, f"set/get mismatch: {got!r}"
+        c.delete(key)
+        c.close()
+        return f"memcached set/get round-trip ok via {host}:{port}"
+
+    return _check(run)
+
+
 def check_redis(node):
     def run():
         import redis
@@ -204,9 +222,16 @@ def run_all():
                     "error": "no cache nodes reported",
                 }
                 continue
-            r = check_redis(nodes[0]["Endpoint"])
+            engine = c.get("Engine", "redis")
+            if engine == "memcached":
+                r = check_memcached(nodes[0]["Endpoint"])
+            else:
+                r = check_redis(nodes[0]["Endpoint"])
             r["kind"] = "elasticache"
             r["status"] = c.get("CacheClusterStatus", "unknown").lower()
+            r["detail"] = r.get("detail", "") and (
+                f"{engine} {c.get('EngineVersion', '')}: " + r["detail"]
+            )
             report[c["CacheClusterId"]] = r
 
     def msk():

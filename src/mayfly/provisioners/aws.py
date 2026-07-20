@@ -292,11 +292,15 @@ class ElastiCacheProvisioner:
         secrets = {}
         ec = ctx.session_factory().client("elasticache")
         for cache in items:
-            ctx.progress(f"elasticache: {cache.name} creating")
+            ctx.progress(
+                f"elasticache: {cache.name} creating "
+                f"({cache.engine} {cache.resolved_version})"
+            )
             if not self._clusters(ec, cache.name):
                 ec.create_cache_cluster(
                     CacheClusterId=cache.name,
-                    Engine="redis",
+                    Engine=cache.engine,
+                    EngineVersion=cache.resolved_version,
                     CacheNodeType="cache.t3.micro",
                     NumCacheNodes=1,
                 )
@@ -310,7 +314,7 @@ class ElastiCacheProvisioner:
             node = r["CacheClusters"][0]["CacheNodes"][0]["Endpoint"]
             api_host, api_port = node["Address"], node["Port"]
             svc = f"elasticache-{cache.name}"
-            port = 6379
+            port = cache.port
             ctx.k8s.apply(
                 _direct_service(svc, {"ministack": "elasticache", "clusterid": cache.name}, port),
                 namespace=ctx.namespace,
@@ -319,11 +323,19 @@ class ElastiCacheProvisioner:
                 f"elasticache: {cache.name} available at {svc}:{port} "
                 f"(AWS API: {api_host}:{api_port})"
             )
-            secrets[svc] = {
-                "REDIS_URL": f"redis://{svc}:{port}",
-                "REDIS_HOST": svc,
-                "REDIS_PORT": str(port),
-            }
+            if cache.engine == "memcached":
+                secrets[svc] = {
+                    "CACHE_ENGINE": "memcached",
+                    "MEMCACHED_HOST": svc,
+                    "MEMCACHED_PORT": str(port),
+                }
+            else:
+                secrets[svc] = {
+                    "CACHE_ENGINE": cache.engine,
+                    "REDIS_URL": f"redis://{svc}:{port}",
+                    "REDIS_HOST": svc,
+                    "REDIS_PORT": str(port),
+                }
         return secrets
 
     @staticmethod

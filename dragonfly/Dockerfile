@@ -5,7 +5,7 @@ LABEL org.opencontainers.image.source="https://github.com/jasondcamp/mayfly" \
 
 WORKDIR /app
 # pure-python clients only: no compiler needed in the image
-RUN pip install --no-cache-dir boto3 pg8000 redis kafka-python-ng
+RUN pip install --no-cache-dir boto3 pg8000 redis pymemcache kafka-python-ng
 
 COPY app.py .
 EXPOSE 8080

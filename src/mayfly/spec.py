@@ -71,9 +71,21 @@ class RdsSpec(_StrictModel):
 
 class ElastiCacheSpec(_StrictModel):
     name: str
+    engine: Literal["redis", "valkey", "memcached"] = "redis"
+    version: Optional[str] = None  # engine version -> image tag; default per engine
     backend: Backend = "auto"
 
     _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+    @property
+    def resolved_version(self) -> str:
+        if self.version:
+            return self.version
+        return {"redis": "7.2", "valkey": "8", "memcached": "1.6"}[self.engine]
+
+    @property
+    def port(self) -> int:
+        return 11211 if self.engine == "memcached" else 6379
 
 
 class MskSpec(_StrictModel):

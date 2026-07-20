@@ -139,6 +139,10 @@ def _kubedock_container() -> dict:
             "--namespace=$(POD_NAMESPACE)",
             "--service-account=kubedock",
             "--reverse-proxy",
+            # kubedock reaps spawned pods after 1h by default — far shorter
+            # than environment TTLs. Namespace deletion is mayfly's cleanup;
+            # effectively disable the reaper.
+            "--reapmax=8760h",
         ],
         "env": [
             {

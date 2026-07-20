@@ -31,7 +31,7 @@ from .emulators import (
 from .k8s import ClusterUnreachable, K8s, summarize_pods
 from .manifests import app_ingress_host, app_manifests
 from .naming import env_name, namespace_for
-from .provisioners import ProvisionContext, provision_all
+from .provisioners import ProvisionContext, provision_all, resolve_backend
 from .spec import EnvSpec, load_spec, parse_ttl
 
 class _Mayfly(typer.Typer):
@@ -144,12 +144,20 @@ def up(
 ):
     """Create or update the environment described by the spec."""
     spec = _load(spec_file, seed)
-    if spec.services.alb and spec.emulator.image is None:
+    needs_patched = []
+    if spec.services.alb:
+        needs_patched.append("services.alb (ALB HTTP data plane)")
+    if any(
+        c.engine == "valkey" and resolve_backend(c.backend, "elasticache", spec) == "emulator"
+        for c in spec.services.elasticache
+    ):
+        needs_patched.append("elasticache engine: valkey")
+    if needs_patched and spec.emulator.image is None:
         typer.echo(
-            "error: services.alb requires an emulator with the ALB HTTP data plane; "
-            "the stock ministack image routes ALB traffic to Lambda targets only.\n"
-            "Select mayfly's patched image in the spec:\n"
-            "  emulator: {image: ghcr.io/jasondcamp/mayfly-ministack, version: \"0.1.3\"}",
+            "error: the stock ministack image does not support: "
+            + "; ".join(needs_patched)
+            + "\nSelect mayfly's patched image in the spec:\n"
+            '  emulator: {image: ghcr.io/jasondcamp/mayfly-ministack, version: "0.1.3"}',
             err=True,
         )
         raise typer.Exit(1)

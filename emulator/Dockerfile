@@ -8,3 +8,7 @@ LABEL org.opencontainers.image.source="https://github.com/jasondcamp/mayfly" \
       org.opencontainers.image.licenses="MIT"
 
 COPY patches/alb.py /opt/ministack/ministack/services/alb.py
+# valkey engine support for ElastiCache (valkey/valkey images, engine
+# plumbing through single-node and cluster-mode spawns) — mirrors the
+# jasondcamp/ministack working tree; also an upstream PR candidate.
+COPY patches/elasticache.py /opt/ministack/ministack/services/elasticache.py

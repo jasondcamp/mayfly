@@ -114,3 +114,26 @@ def test_alb_spec_and_target_validation():
         EnvSpec.model_validate(
             {"seed": "x", "services": {"alb": [{"name": "a", "targetApp": "ghost"}]}}
         )
+
+
+def test_elasticache_engine_and_version():
+    spec = EnvSpec.model_validate(
+        {
+            "seed": "x",
+            "services": {
+                "elasticache": [
+                    {"name": "a"},
+                    {"name": "b", "engine": "memcached", "version": "1.6"},
+                    {"name": "c", "engine": "valkey"},
+                ]
+            },
+        }
+    )
+    a, b, c = spec.services.elasticache
+    assert (a.engine, a.resolved_version, a.port) == ("redis", "7.2", 6379)
+    assert (b.engine, b.resolved_version, b.port) == ("memcached", "1.6", 11211)
+    assert (c.engine, c.resolved_version, c.port) == ("valkey", "8", 6379)
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate(
+            {"seed": "x", "services": {"elasticache": [{"name": "a", "engine": "mongo"}]}}
+        )

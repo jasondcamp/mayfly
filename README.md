@@ -95,6 +95,8 @@ services:
       # backend: auto  # auto | emulator | native
   elasticache:
     - name: cache-a
+      engine: redis    # redis | valkey | memcached (valkey needs the patched emulator image)
+      version: "7.2"   # engine version -> container image tag
   msk:
     - name: events
       topics: [orders]

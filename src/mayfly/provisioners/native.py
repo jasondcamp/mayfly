@@ -9,7 +9,11 @@ Secret contract is identical, so apps can't tell the difference.
 POSTGRES_IMAGE = "postgres:16-alpine"
 MYSQL_IMAGE = "mysql:8.4"
 MARIADB_IMAGE = "mariadb:11"
-VALKEY_IMAGE = "valkey/valkey:8-alpine"
+CACHE_IMAGES = {
+    "redis": ("redis:{v}-alpine", ["redis-cli", "ping"]),
+    "valkey": ("valkey/valkey:{v}-alpine", ["valkey-cli", "ping"]),
+    "memcached": ("memcached:{v}-alpine", None),  # no cli; tcp probe
+}
 REDPANDA_IMAGE = "redpandadata/redpanda:v24.2.18"
 
 DB_USER = "app"
@@ -119,13 +123,19 @@ class ElastiCacheNativeProvisioner:
         secrets = {}
         for cache in items:
             svc = f"elasticache-{cache.name}"
-            port = 6379
+            port = cache.port
+            image_tpl, probe_cmd = CACHE_IMAGES[cache.engine]
+            probe = (
+                {"exec": {"command": probe_cmd}}
+                if probe_cmd
+                else {"tcpSocket": {"port": port}}
+            )
             container = {
-                "name": "valkey",
-                "image": VALKEY_IMAGE,
+                "name": cache.engine,
+                "image": image_tpl.format(v=cache.resolved_version),
                 "ports": [{"containerPort": port}],
                 "readinessProbe": {
-                    "exec": {"command": ["valkey-cli", "ping"]},
+                    **probe,
                     "initialDelaySeconds": 1,
                     "periodSeconds": 2,
                 },
@@ -134,15 +144,23 @@ class ElastiCacheNativeProvisioner:
                     "limits": {"memory": "256Mi"},
                 },
             }
-            ctx.progress(f"elasticache: {cache.name} deploying")
+            ctx.progress(f"elasticache: {cache.name} deploying ({cache.engine})")
             ctx.k8s.apply_all([_deployment(svc, container), _service(svc, port)], ctx.namespace)
             ctx.k8s.wait_deployment(ctx.namespace, svc, timeout=180)
             ctx.progress(f"elasticache: {cache.name} available at {svc}:{port}")
-            secrets[svc] = {
-                "REDIS_URL": f"redis://{svc}:{port}",
-                "REDIS_HOST": svc,
-                "REDIS_PORT": str(port),
-            }
+            if cache.engine == "memcached":
+                secrets[svc] = {
+                    "CACHE_ENGINE": "memcached",
+                    "MEMCACHED_HOST": svc,
+                    "MEMCACHED_PORT": str(port),
+                }
+            else:
+                secrets[svc] = {
+                    "CACHE_ENGINE": cache.engine,
+                    "REDIS_URL": f"redis://{svc}:{port}",
+                    "REDIS_HOST": svc,
+                    "REDIS_PORT": str(port),
+                }
         return secrets
 
 
