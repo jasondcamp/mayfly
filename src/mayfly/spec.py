@@ -104,6 +104,28 @@ class DynamoSpec(_StrictModel):
     _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
 
 
+class SecretsManagerSpec(_StrictModel):
+    name: str  # SM naming: letters/digits and /_+=.@- (slashes are idiomatic)
+    value: Optional[str] = None  # literal fixture value (test data, not prod creds)
+    generate: bool = False  # random value per environment (kept across re-ups)
+    backend: Backend = "auto"  # emulator-only (in-process)
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        if not re.match(r"^[A-Za-z0-9/_+=.@-]{1,256}$", v):
+            raise ValueError(f"{v!r} is not a valid Secrets Manager secret name")
+        return v
+
+    @model_validator(mode="after")
+    def _value_xor_generate(self) -> "SecretsManagerSpec":
+        if bool(self.value) == self.generate:
+            raise ValueError(
+                f"secret {self.name!r}: set exactly one of value: or generate: true"
+            )
+        return self
+
+
 class AlbSpec(_StrictModel):
     name: str
     target_app: str = Field(alias="targetApp")  # app (from apps:) to route to
@@ -119,6 +141,7 @@ class ServicesSpec(_StrictModel):
     msk: list[MskSpec] = Field(default_factory=list)
     dynamodb: list[DynamoSpec] = Field(default_factory=list)
     alb: list[AlbSpec] = Field(default_factory=list)
+    secretsmanager: list[SecretsManagerSpec] = Field(default_factory=list)
 
 
 class ResourcesSpec(_StrictModel):

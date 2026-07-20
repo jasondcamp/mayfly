@@ -197,6 +197,17 @@ def check_alb(name):
     return _check(run)
 
 
+def check_secret(sm, name):
+    def run():
+        v = sm.get_secret_value(SecretId=name)
+        val = v.get("SecretString") or v.get("SecretBinary")
+        assert val, "empty secret value"
+        version = str(v.get("VersionId", "?"))[:8]
+        return f"get-secret-value ok ({len(str(val))} chars, version {version})"
+
+    return _check(run)
+
+
 def run_all():
     """Discover via the AWS control plane, then verify each instance."""
     report = {}
@@ -273,6 +284,14 @@ def run_all():
             r["status"] = "available"  # s3 has no lifecycle status
             report[b["Name"]] = r
 
+    def secretsmanager():
+        sm = _aws("secretsmanager")
+        for sec in sm.list_secrets().get("SecretList", []):
+            r = check_secret(sm, sec["Name"])
+            r["kind"] = "secretsmanager"
+            r["status"] = "available"
+            report[sec["Name"]] = r
+
     def alb():
         for lb in _aws("elbv2").describe_load_balancers().get("LoadBalancers", []):
             r = check_alb(lb["LoadBalancerName"])
@@ -285,6 +304,7 @@ def run_all():
     _try("msk", msk)
     _try("dynamodb", dynamodb)
     _try("s3", s3)
+    _try("secretsmanager", secretsmanager)
     _try("alb", alb)
     return report
 
@@ -367,10 +387,11 @@ PAGE = """<!doctype html>
 <div class="tiles" id="tiles"></div>
 <footer>Auto-refreshes every 5s · <a href="/api">JSON</a> · <span id="stamp"></span></footer>
 <script>
-const ORDER = ["alb", "rds", "elasticache", "msk", "dynamodb", "s3"];
+const ORDER = ["alb", "rds", "elasticache", "msk", "dynamodb", "s3", "secretsmanager"];
 const TITLES = { rds: ["RDS", "postgres"], elasticache: ["ELASTICACHE", "redis"],
                  msk: ["MSK", "kafka"], dynamodb: ["DYNAMODB", "dynamo"],
-                 s3: ["S3", "buckets"], alb: ["ALB", "elbv2"] };
+                 s3: ["S3", "buckets"], alb: ["ALB", "elbv2"],
+                 secretsmanager: ["SECRETS MANAGER", "secretsmanager"] };
 const SLOW_MS = 1000;
 function row(label, c) {
   const slow = c.ok && c.ms >= SLOW_MS;

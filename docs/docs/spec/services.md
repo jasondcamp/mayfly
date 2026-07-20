@@ -39,6 +39,12 @@ services:
   alb:
     - name: hello-alb
       targetApp: hello                  # must be an apps: key
+
+  secretsmanager:
+    - name: app/api-key
+      value: "test-key-123"             # literal fixture
+    - name: app/signing-key
+      generate: true                    # random per env; kept across re-ups
 ```
 
 ## Notes per class
@@ -58,6 +64,14 @@ services:
 - **dynamodb** — in-process; emulator-only (no native backend exists).
 - **alb** — an emulated ALB with a **working data plane**; see the
   [Internal ALBs guide](../guides/internal-albs).
+- **secretsmanager** — in-process; emulator-only. Literal `value:` entries
+  converge to the spec on re-up; `generate: true` entries get a random
+  value on first creation and are never rotated by re-ups. Values in a
+  committed spec are test fixtures — don't put production credentials
+  there; use `generate:` when the app just needs *a* secret to exist. Apps
+  can fetch at runtime via the SDK (`GetSecretValue` against the injected
+  `AWS_ENDPOINT_URL`) — the AWS-native pattern — or consume the mirrored
+  k8s Secret.
 
 ## Secrets: the app contract
 
@@ -70,6 +84,7 @@ services:
 | msk | `msk-<name>` | `KAFKA_BROKERS` |
 | dynamodb | `dynamodb-<name>` | `TABLE_NAME`, `HASH_KEY`, `DYNAMODB_ENDPOINT` |
 | alb | `alb-<name>` | `ALB_URL`, `ALB_DNS_NAME`, `ALB_HOST`, `ALB_TARGET_APP`, `ALB_PUBLIC_URL`* |
+| secretsmanager | `sm-<mangled-name>` | `SECRET_NAME`, `SECRET_ARN`, `SECRET_VALUE` |
 
 \* present when the cluster has Traefik (k3s/k3d) for browser access.
 

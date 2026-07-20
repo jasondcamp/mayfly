@@ -20,6 +20,7 @@ instance found:
 | dynamodb | put-item + get-item + delete (hash key discovered from the table) |
 | s3 | put + get + delete an object per bucket |
 | alb | an HTTP request through the data plane |
+| secretsmanager | get-secret-value per secret, verified non-empty |
 
 Declare a service in the spec and a tile appears — no secrets to mount, no
 lists to maintain. Adding a service kind to mayfly means adding its

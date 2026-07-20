@@ -1,5 +1,7 @@
 """AWS-API provisioners backed by floci (+ kubedock for container services)."""
 
+import re
+import secrets as _pysecrets
 import time
 from typing import Optional
 
@@ -61,6 +63,49 @@ class S3Provisioner:
                 "S3_ENDPOINT": AWS_ENDPOINT,
             }
         }
+
+
+def _sm_k8s_name(secret_name: str) -> str:
+    """app/api-key -> sm-app-api-key (a valid k8s Secret name)."""
+    mangled = re.sub(r"[^a-z0-9-]+", "-", secret_name.lower()).strip("-")
+    return f"sm-{mangled}"[:63].rstrip("-")
+
+
+class SecretsManagerProvisioner:
+    """Seed Secrets Manager with fixtures. In-process in the emulator.
+
+    Literal ``value:`` entries converge to the spec (updated on re-up);
+    ``generate: true`` entries get a random value on first creation and are
+    left untouched afterwards, so re-ups never rotate them out from under a
+    running app. Each secret is mirrored to a k8s Secret ``sm-<name>`` for
+    apps that consume env vars instead of the SDK.
+    """
+
+    def provision(self, items, ctx) -> dict:
+        secrets = {}
+        sm = ctx.session_factory().client("secretsmanager")
+        existing = {s["Name"] for s in sm.list_secrets().get("SecretList", [])}
+        for item in items:
+            if item.name in existing:
+                if item.value is not None:
+                    sm.update_secret(SecretId=item.name, SecretString=item.value)
+                    ctx.progress(f"secretsmanager: {item.name} converged to spec value")
+                else:
+                    ctx.progress(f"secretsmanager: {item.name} exists (generated; kept)")
+            else:
+                value = item.value if item.value is not None else _pysecrets.token_urlsafe(24)
+                sm.create_secret(Name=item.name, SecretString=value)
+                ctx.progress(
+                    f"secretsmanager: {item.name} created"
+                    + (" (generated)" if item.generate else "")
+                )
+            got = sm.get_secret_value(SecretId=item.name)
+            secrets[_sm_k8s_name(item.name)] = {
+                "SECRET_NAME": item.name,
+                "SECRET_ARN": got["ARN"],
+                "SECRET_VALUE": got["SecretString"],
+            }
+        return secrets
 
 
 class AlbProvisioner:

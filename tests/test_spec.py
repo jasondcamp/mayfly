@@ -137,3 +137,33 @@ def test_elasticache_engine_and_version():
         EnvSpec.model_validate(
             {"seed": "x", "services": {"elasticache": [{"name": "a", "engine": "mongo"}]}}
         )
+
+
+def test_secretsmanager_spec():
+    spec = EnvSpec.model_validate(
+        {
+            "seed": "x",
+            "services": {
+                "secretsmanager": [
+                    {"name": "app/api-key", "value": "v1"},
+                    {"name": "app/signing-key", "generate": True},
+                ]
+            },
+        }
+    )
+    assert spec.services.secretsmanager[0].value == "v1"
+    assert spec.services.secretsmanager[1].generate is True
+    for bad in (
+        {"name": "app/x"},                             # neither
+        {"name": "app/x", "value": "v", "generate": True},  # both
+        {"name": "bad name!", "value": "v"},           # invalid chars
+    ):
+        with pytest.raises(ValueError):
+            EnvSpec.model_validate({"seed": "x", "services": {"secretsmanager": [bad]}})
+
+
+def test_sm_k8s_name_mangling():
+    from mayfly.provisioners.aws import _sm_k8s_name
+
+    assert _sm_k8s_name("app/api-key") == "sm-app-api-key"
+    assert _sm_k8s_name("App_Signing.Key@2") == "sm-app-signing-key-2"
