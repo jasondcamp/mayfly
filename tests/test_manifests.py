@@ -211,3 +211,73 @@ def test_app_ingress_alb_shape():
         ing["metadata"]["annotations"]["alb.ingress.kubernetes.io/scheme"]
         == "internet-facing"
     )
+
+
+def test_app_patch_merges_and_reasserts_invariants():
+    from mayfly.manifests import merge_patch
+
+    app = AppSpec(
+        image="i:1",
+        port=3000,
+        patch={
+            "spec": {
+                "template": {
+                    "metadata": {"labels": {"team": "core", "app": "hijacked"}},
+                    "spec": {
+                        "enableServiceLinks": True,  # must be re-asserted off
+                        "tolerations": [{"key": "gpu", "operator": "Exists"}],
+                        "containers": [
+                            {
+                                "name": "myapi",  # merges into existing by name
+                                "volumeMounts": [{"name": "cfg", "mountPath": "/etc/app"}],
+                            },
+                            {"name": "sidecar", "image": "envoy:1"},  # appends
+                        ],
+                        "volumes": [{"name": "cfg", "configMap": {"name": "myapi-cfg"}}],
+                    },
+                },
+                "selector": {"matchLabels": {"app": "hijacked"}},
+            }
+        },
+    )
+    (dep, _svc) = app_manifests("myapi", app, "ns1")
+    pod = dep["spec"]["template"]["spec"]
+    # invariants survive hostile patches
+    assert dep["spec"]["selector"] == {"matchLabels": {"app": "myapi"}}
+    assert dep["spec"]["template"]["metadata"]["labels"]["app"] == "myapi"
+    assert dep["spec"]["template"]["metadata"]["labels"]["team"] == "core"
+    assert pod["enableServiceLinks"] is False
+    # additions land
+    assert pod["tolerations"] == [{"key": "gpu", "operator": "Exists"}]
+    assert pod["volumes"] == [{"name": "cfg", "configMap": {"name": "myapi-cfg"}}]
+    names = [c["name"] for c in pod["containers"]]
+    assert names == ["myapi", "sidecar"]
+    main = pod["containers"][0]
+    assert main["image"] == "i:1"  # curated field survives named-merge
+    assert main["volumeMounts"] == [{"name": "cfg", "mountPath": "/etc/app"}]
+
+    # list-merge semantics directly
+    assert merge_patch([1, 2], [3]) == [3]  # unnamed lists replace
+    assert merge_patch({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
+
+
+def test_app_ingress_patch():
+    app = AppSpec(
+        image="i:1",
+        ingress={
+            "host": "x.example.com",
+            "patch": {
+                "metadata": {
+                    "name": "hijacked",
+                    "annotations": {"nginx.ingress.kubernetes.io/ssl-redirect": "true"},
+                },
+                "spec": {"tls": [{"hosts": ["x.example.com"], "secretName": "x-tls"}]},
+            },
+        },
+    )
+    manifests = app_manifests("web", app, "ns1")
+    ing = next(m for m in manifests if m["kind"] == "Ingress")
+    assert ing["metadata"]["name"] == "web"  # re-asserted
+    assert ing["metadata"]["annotations"]["nginx.ingress.kubernetes.io/ssl-redirect"] == "true"
+    assert ing["spec"]["tls"] == [{"hosts": ["x.example.com"], "secretName": "x-tls"}]
+    assert ing["spec"]["rules"][0]["host"] == "x.example.com"  # generated rule intact

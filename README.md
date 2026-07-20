@@ -3,9 +3,12 @@
 Short lived ephemeral environment infrastructure.
 
 One YAML spec declares an environment — S3 buckets, RDS databases, ElastiCache,
-MSK/Kafka, and app deployments. `mayfly up` materializes it in an isolated
-Kubernetes namespace, `mayfly down` (or the TTL reaper) destroys it. No Docker
-socket, no privileged pods, no real AWS.
+MSK/Kafka, DynamoDB, ALBs, and app deployments. `mayfly up` materializes it in
+an isolated Kubernetes namespace, `mayfly down` (or the TTL reaper) destroys
+it. No Docker socket, no privileged pods, no real AWS.
+
+**Full documentation: https://docs.mayfly.sh** (source in `docs/`,
+built with `docs/build.sh`).
 
 ## How it works
 
@@ -115,6 +118,14 @@ apps:
     imagePullSecret: regcred     # copied into the namespace at `up` from
                                  # --pull-secret-namespace (default "default")
 ```
+
+For anything without a dedicated field, each app takes a `patch:` — arbitrary
+YAML deep-merged onto the generated Deployment as the final step (maps merge
+recursively; lists of named objects like `containers`/`volumes`/`env` merge
+by name; other lists replace). mayfly re-asserts its invariants afterward
+(selector, `app` label, `enableServiceLinks: false`), so a patch can add
+sidecars, volumes, tolerations, or securityContext but can't silently break
+the wiring the environment depends on.
 
 Each app becomes a Deployment + Service reachable at `<name>:8080`
 in-namespace. App pods get `AWS_ENDPOINT_URL` plus whatever the listed

@@ -159,6 +159,9 @@ class AppIngressSpec(_StrictModel):
     host: Optional[str] = None
     class_name: Optional[str] = Field(default=None, alias="className")
     annotations: dict[str, str] = Field(default_factory=dict)  # e.g. alb.ingress.kubernetes.io/*
+    # escape hatch, same merge semantics as the app-level patch: deep-merged
+    # onto the generated Ingress (mayfly re-asserts the resource name)
+    patch: dict = Field(default_factory=dict)
 
 
 class AppSpec(_StrictModel):
@@ -176,6 +179,11 @@ class AppSpec(_StrictModel):
     readiness: Optional[ReadinessSpec] = None  # httpGet probe; omit for none
     image_pull_secret: Optional[str] = Field(default=None, alias="imagePullSecret")
     ingress: Optional[AppIngressSpec] = None  # opt-in; omit for cluster-internal only
+    # escape hatch for anything without a dedicated field: arbitrary YAML
+    # deep-merged onto the generated Deployment (maps merge; lists of named
+    # objects merge by name; other lists replace). mayfly re-asserts its
+    # invariants (selector, app label, enableServiceLinks) after the merge.
+    patch: dict = Field(default_factory=dict)
 
 
 class EnvSpec(_StrictModel):
