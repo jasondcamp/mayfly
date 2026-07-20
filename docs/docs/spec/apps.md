@@ -5,9 +5,30 @@ sidebar_position: 3
 # Apps and patches
 
 Every app becomes a Deployment + Service reachable in-namespace at
-`<name>:8080`. Apps deploy **after** all services are provisioned, so an
-app never boots before its database exists, and each readiness probe gates
-`up` completing.
+`<name>:<servicePort>` (default 8080). Apps deploy **after** all services
+are provisioned, so an app never boots before its database exists, and each
+readiness probe gates `up` completing.
+
+A worked TCP-app example — pgbouncer in front of the RDS postgres (in
+production it might live on an EC2 instance; in an ephemeral environment a
+container is the pragmatic stand-in). The `rds-appdb` secret's
+`DATABASE_URL` is all its image needs:
+
+```yaml
+apps:
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.24.1-p1
+    port: 5432
+    servicePort: 5432        # -> pgbouncer:5432, protocol-native
+    secrets: [rds-appdb]
+    env: {POOL_MODE: transaction, AUTH_TYPE: scram-sha-256}
+    readiness: {tcp: true}
+  myapi:
+    image: ghcr.io/you/myapi:abc
+    secrets: [rds-appdb]
+    env:                     # explicit env beats envFrom: route through the pool
+      DATABASE_URL: postgresql://app:apppass@pgbouncer:5432/app
+```
 
 ```yaml
 apps:
@@ -15,6 +36,8 @@ apps:
     enabled: true                       # default true
     image: ghcr.io/you/myapi:sha-abc    # required
     port: 3000                          # container port (default 80)
+    servicePort: 8080                   # in-namespace Service port (default 8080);
+                                        # set protocol-native ports for TCP apps
     command: ["/bin/server"]            # entrypoint override
     args: ["--verbose"]
     replicas: 2                         # default 1
@@ -24,6 +47,7 @@ apps:
       - {name: elasticache-cache-b, prefix: CACHE_B_}
     resources: {cpu: 100m, memory: 128Mi, memoryLimit: 512Mi, cpuLimit: "1"}
     readiness:
+      tcp: false                        # true -> tcpSocket probe (non-HTTP apps)
       path: /healthz
       port: 3000                        # default: the app port
       initialDelaySeconds: 3

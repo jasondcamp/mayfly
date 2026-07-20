@@ -152,6 +152,7 @@ class ResourcesSpec(_StrictModel):
 
 
 class ReadinessSpec(_StrictModel):
+    tcp: bool = False  # tcpSocket probe instead of httpGet (non-HTTP apps)
     path: str = "/"
     port: Optional[int] = None  # default: the app's port
     initial_delay_seconds: int = Field(default=2, alias="initialDelaySeconds", ge=0)
@@ -191,6 +192,9 @@ class AppSpec(_StrictModel):
     enabled: bool = True
     image: str
     port: int = 80
+    # in-namespace Service port (the "<name>:8080" convention); override for
+    # protocol-native ports, e.g. 5432 for a pgbouncer/postgres-shaped app
+    service_port: int = Field(default=8080, alias="servicePort")
     command: list[str] = Field(default_factory=list)  # override image entrypoint
     args: list[str] = Field(default_factory=list)
     replicas: int = Field(default=1, ge=1)

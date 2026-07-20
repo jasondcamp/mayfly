@@ -281,3 +281,22 @@ def test_app_ingress_patch():
     assert ing["metadata"]["annotations"]["nginx.ingress.kubernetes.io/ssl-redirect"] == "true"
     assert ing["spec"]["tls"] == [{"hosts": ["x.example.com"], "secretName": "x-tls"}]
     assert ing["spec"]["rules"][0]["host"] == "x.example.com"  # generated rule intact
+
+
+def test_app_tcp_app_shape():
+    app = AppSpec(
+        image="edoburu/pgbouncer:v1.24.1-p1",
+        port=5432,
+        servicePort=5432,
+        readiness={"tcp": True},
+    )
+    (dep, svc) = app_manifests("pgbouncer", app, "ns1")
+    probe = dep["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+    assert probe["tcpSocket"] == {"port": 5432}
+    assert "httpGet" not in probe
+    assert svc["spec"]["ports"] == [{"port": 5432, "targetPort": 5432}]
+
+
+def test_app_service_port_default_unchanged():
+    (_dep, svc) = app_manifests("web", AppSpec(image="i:1", port=3000), "ns1")
+    assert svc["spec"]["ports"] == [{"port": 8080, "targetPort": 3000}]

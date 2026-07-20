@@ -69,11 +69,14 @@ def app_manifests(name: str, app: AppSpec, namespace: str) -> list[dict]:
     if app.args:
         container["args"] = app.args
     if app.readiness:
+        probe_port = app.readiness.port or app.port
+        probe = (
+            {"tcpSocket": {"port": probe_port}}
+            if app.readiness.tcp
+            else {"httpGet": {"path": app.readiness.path, "port": probe_port}}
+        )
         container["readinessProbe"] = {
-            "httpGet": {
-                "path": app.readiness.path,
-                "port": app.readiness.port or app.port,
-            },
+            **probe,
             "initialDelaySeconds": app.readiness.initial_delay_seconds,
             "periodSeconds": app.readiness.period_seconds,
         }
@@ -125,7 +128,7 @@ def app_manifests(name: str, app: AppSpec, namespace: str) -> list[dict]:
             "metadata": {"name": name},
             "spec": {
                 "selector": {"app": name},
-                "ports": [{"port": 8080, "targetPort": app.port}],
+                "ports": [{"port": app.service_port, "targetPort": app.port}],
             },
         },
     ]
