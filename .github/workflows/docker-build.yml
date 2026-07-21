@@ -132,7 +132,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-${{ matrix.image }}-*
+          # anchored with the platform prefix: a bare "<image>-*" glob would
+          # also match sibling images that share the prefix (mayfly-caddis-*
+          # matches mayfly-caddis-frontend-*), merging foreign digests
+          pattern: digests-${{ matrix.image }}-linux-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
