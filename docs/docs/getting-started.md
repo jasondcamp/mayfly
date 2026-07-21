@@ -55,6 +55,7 @@ mayfly status env.yaml             # pods + provisioned secrets
 mayfly list                        # all environments, age + TTL
 mayfly render env.yaml             # print the resolved plan, touch nothing
 mayfly extend env.yaml --ttl 4h    # push expiry out
+mayfly restart env.yaml [--app x]  # rolling-restart apps (services untouched)
 mayfly down env.yaml               # teardown (namespace delete)
 mayfly reap [--dry-run]            # delete every expired environment
 ```

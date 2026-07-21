@@ -336,6 +336,40 @@ def render(
 
 
 @app.command()
+def restart(
+    spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
+    seed: Optional[str] = SEED_OPT,
+    apps_filter: list[str] = typer.Option(
+        [], "--app", help="restart only these apps (repeatable); default: all apps"
+    ),
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
+):
+    """Rolling-restart the environment's apps (e.g. after pushing new images
+    under the same tag). Services and the emulator are left untouched."""
+    spec = _load(spec_file, seed)
+    ns = namespace_for(spec.seed, spec.namespace_prefix)
+    k8s = K8s(context, kubeconfig)
+    _managed_namespace(k8s, ns)
+
+    targets = {n: a for n, a in spec.apps.items() if a.enabled}
+    if apps_filter:
+        unknown = set(apps_filter) - set(targets)
+        if unknown:
+            typer.echo(f"error: unknown app(s): {', '.join(sorted(unknown))}", err=True)
+            raise typer.Exit(1)
+        targets = {n: a for n, a in targets.items() if n in apps_filter}
+
+    for name in targets:
+        _say(f"restarting {name}")
+        k8s.restart_deployment(ns, name)
+    for name in targets:
+        k8s.wait_deployment(ns, name, timeout=300)
+        _detail(f"{name} rolled")
+    _say(f"{len(targets)} app(s) restarted")
+
+
+@app.command()
 def reap(
     dry_run: bool = typer.Option(False, "--dry-run", help="report only, delete nothing"),
     context: Optional[str] = CTX_OPT,

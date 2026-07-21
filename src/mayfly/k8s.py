@@ -200,6 +200,28 @@ class K8s:
             time.sleep(2)
         raise TimeoutError(f"deployment {namespace}/{name} rollout not complete after {timeout}s")
 
+    def restart_deployment(self, namespace: str, name: str) -> None:
+        """Trigger a rolling restart (same mechanism as kubectl rollout restart)."""
+        from datetime import datetime, timezone
+
+        self.apps.patch_namespaced_deployment(
+            name,
+            namespace,
+            {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "mayfly.dev/restarted-at": datetime.now(
+                                    timezone.utc
+                                ).isoformat(timespec="seconds")
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
     def exec_in_deployment(
         self, namespace: str, deployment: str, command: list[str], retries: int = 5
     ) -> str:

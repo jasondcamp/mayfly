@@ -120,3 +120,16 @@ apps:
 
 If you find yourself writing the same patch in every spec, that's the
 signal it should graduate to a dedicated field — open an issue.
+
+## Updating running apps
+
+Two flows, both without `down`:
+
+- **New image tag** (the published flow): change the tag in the spec, run
+  `mayfly up` — server-side apply means only changed Deployments roll, and
+  services/data are untouched.
+- **Same tag, new content** (the dev loop — you rebuilt and pushed/imported
+  over an existing tag): apply sees no diff, so use
+  `mayfly restart env.yaml` (all apps) or `--app caddis-api --app ...` for
+  a subset. It's a rolling restart with rollout waits; the emulator and
+  service pods are never restarted (their state matters).
