@@ -1,0 +1,44 @@
+# A per-PR environment template for CI (swap in your own images).
+# One shared spec; the pipeline picks the environment and the version:
+#
+#   mayfly up examples/env-pr.yaml --seed pr-$PR_ID \
+#     --set apps.backend.image=registry.example.com/backend:$COMMIT \
+#     --set initApps.migrate.image=registry.example.com/backend:$COMMIT
+#   mayfly down examples/env-pr.yaml --seed pr-$PR_ID   # on PR close
+#
+# Same seed → same environment (re-running up converges); the TTL reaps
+# anything a pipeline forgot to tear down. The migrate init app runs
+# before the backend rolls, and only when its image actually changed.
+apiVersion: mayfly/v1alpha1
+seed: pr-0               # always overridden by --seed in CI
+namespacePrefix: pr
+ttl: 72h
+
+services:
+  s3:
+    buckets: [uploads]
+  rds:
+    - name: appdb
+      engine: postgres
+      dbName: app
+  elasticache:
+    - name: cache
+      engine: redis
+      version: "7.2"
+
+initApps:
+  migrate:
+    image: registry.example.com/backend:main   # --set to the PR tag
+    command: ["rake", "db:prepare"]
+    secrets: [rds-appdb]        # DATABASE_URL — direct, migrations must
+    runPolicy: on-change        # not go through a transaction pooler
+
+apps:
+  backend:
+    image: registry.example.com/backend:main   # --set to the PR tag
+    port: 3000
+    secrets: [rds-appdb, elasticache-cache, s3-buckets]
+    readiness: {path: /healthz}
+    imagePullSecret: regcred    # copied from --pull-secret-namespace
+    ingress: {}                 # backend.pr-<name>.localtest.me locally;
+                                # set host/className for real DNS

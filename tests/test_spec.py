@@ -167,3 +167,83 @@ def test_sm_k8s_name_mangling():
 
     assert _sm_k8s_name("app/api-key") == "sm-app-api-key"
     assert _sm_k8s_name("App_Signing.Key@2") == "sm-app-signing-key-2"
+
+
+def test_init_apps_spec():
+    spec = EnvSpec.model_validate(
+        {
+            "seed": "x",
+            "initApps": {"migrate": {"image": "i:1", "command": ["rake"]}},
+        }
+    )
+    assert spec.init_apps["migrate"].timeout_seconds == 600
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate(
+            {"seed": "x", "initApps": {"Bad_Name": {"image": "i:1"}}}
+        )
+
+
+# ---------------------------------------------------------------- overrides
+def _raw_example():
+    import yaml
+    from pathlib import Path
+
+    return yaml.safe_load(Path("examples/env.yaml").read_text())
+
+
+def test_set_override_dict_path():
+    from mayfly.spec import EnvSpec, apply_overrides
+
+    raw = _raw_example()
+    apply_overrides(raw, ["apps.hello.image=ghcr.io/jasondcamp/mayfly-hello:pr-9"])
+    spec = EnvSpec.model_validate(raw)
+    assert spec.apps["hello"].image == "ghcr.io/jasondcamp/mayfly-hello:pr-9"
+
+
+def test_set_override_coerces_int_and_adds_env_key():
+    from mayfly.spec import EnvSpec, apply_overrides
+
+    raw = _raw_example()
+    apply_overrides(
+        raw, ["apps.hello.replicas=5", "apps.caddis-api.env.FLAG=on"]
+    )
+    spec = EnvSpec.model_validate(raw)
+    assert spec.apps["hello"].replicas == 5
+    assert spec.apps["caddis-api"].env["FLAG"] == "on"
+
+
+def test_set_override_typo_in_app_name_errors():
+    import pytest
+
+    from mayfly.spec import apply_overrides
+
+    with pytest.raises(ValueError, match="no key 'nope'"):
+        apply_overrides(_raw_example(), ["apps.nope.image=x"])
+
+
+def test_set_override_named_list_entry():
+    from mayfly.spec import EnvSpec, apply_overrides
+
+    raw = _raw_example()
+    apply_overrides(raw, ["services.rds.appdb.dbName=other"])
+    spec = EnvSpec.model_validate(raw)
+    assert spec.services.rds[0].db_name == "other"
+
+
+def test_set_override_list_index():
+    from mayfly.spec import apply_overrides
+
+    raw = _raw_example()
+    apply_overrides(raw, ["services.s3.buckets.0=first"])
+    assert raw["services"]["s3"]["buckets"][0] == "first"
+
+
+def test_set_override_errors():
+    import pytest
+
+    from mayfly.spec import apply_overrides
+
+    with pytest.raises(ValueError, match="expected path"):
+        apply_overrides({}, ["no-equals-sign"])
+    with pytest.raises(ValueError, match="no entry named"):
+        apply_overrides(_raw_example(), ["services.rds.missing.dbName=x"])

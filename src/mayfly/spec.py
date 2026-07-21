@@ -218,6 +218,32 @@ class AppSpec(_StrictModel):
     patch: dict = Field(default_factory=dict)
 
 
+class InitAppSpec(_StrictModel):
+    """One-shot environment initialization (a Kubernetes Job): migrations,
+    fixtures, external setup. Runs after services are provisioned and before
+    apps deploy, sequentially in declaration order, on EVERY up — tasks must
+    be idempotent (e.g. `rails db:prepare`)."""
+
+    enabled: bool = True
+    image: str
+    command: list[str] = Field(default_factory=list)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    secrets: list[SecretRef] = Field(default_factory=list)
+    resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
+    image_pull_secret: Optional[str] = Field(default=None, alias="imagePullSecret")
+    timeout_seconds: int = Field(default=600, alias="timeoutSeconds", ge=1)
+    # always:    run on every up (default — converge semantics)
+    # once:      run only if it has never succeeded in this environment
+    # on-change: run when this entry's config (image/command/env/...) changed
+    #            since its last successful run — e.g. migrations that should
+    #            fire exactly when the code version bumps, before apps update
+    run_policy: Literal["always", "once", "on-change"] = Field(
+        default="always", alias="runPolicy"
+    )
+    patch: dict = Field(default_factory=dict)  # merged onto the generated Job
+
+
 class EnvSpec(_StrictModel):
     api_version: str = Field(default=API_VERSION, alias="apiVersion")
     seed: str
@@ -225,6 +251,7 @@ class EnvSpec(_StrictModel):
     ttl: str = DEFAULT_TTL
     emulator: EmulatorSpec = Field(default_factory=EmulatorSpec)
     services: ServicesSpec = Field(default_factory=ServicesSpec)
+    init_apps: dict[str, InitAppSpec] = Field(default_factory=dict, alias="initApps")
     apps: dict[str, AppSpec] = Field(default_factory=dict)
 
     @field_validator("api_version")
@@ -263,6 +290,13 @@ class EnvSpec(_StrictModel):
             _validate_dns_name(name)
         return v
 
+    @field_validator("init_apps")
+    @classmethod
+    def _check_init_app_names(cls, v: dict[str, InitAppSpec]) -> dict[str, InitAppSpec]:
+        for name in v:
+            _validate_dns_name(name)
+        return v
+
     @model_validator(mode="after")
     def _check_alb_targets(self) -> "EnvSpec":
         for alb in self.services.alb:
@@ -281,8 +315,65 @@ class EnvSpec(_StrictModel):
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
 
-def load_spec(path: Union[str, Path]) -> EnvSpec:
+def apply_overrides(raw: dict, overrides: list[str]) -> None:
+    """Apply --set overrides (``a.b.c=value``) onto the raw spec mapping,
+    before validation. Paths walk mappings by key, lists by integer index
+    or by an entry's ``name`` field (``services.rds.appdb.dbName=...``).
+    Values stay strings — pydantic coerces ints/bools where the field
+    calls for them — and scalars only: no setting whole maps or lists.
+    Intermediate keys must already exist (a typo'd app name errors instead
+    of silently creating a stray app); only the leaf may be new, so
+    ``apps.api.env.FLAG=1`` works when ``env:`` is present in the spec."""
+    for item in overrides:
+        path, sep, value = item.partition("=")
+        if not sep or not path:
+            raise ValueError(f"--set {item!r}: expected path.to.field=value")
+        keys = path.split(".")
+        node = raw
+        for i, key in enumerate(keys[:-1]):
+            trail = ".".join(keys[: i + 1])
+            if isinstance(node, dict):
+                if key not in node:
+                    raise ValueError(
+                        f"--set {item!r}: no key {key!r} at {trail!r} "
+                        f"(have: {sorted(node)})"
+                    )
+                node = node[key]
+            elif isinstance(node, list):
+                node = _list_entry(node, key, trail)
+            else:
+                raise ValueError(f"--set {item!r}: {trail!r} is not a mapping or list")
+        leaf = keys[-1]
+        if isinstance(node, dict):
+            node[leaf] = value
+        elif isinstance(node, list):
+            idx = _list_index(node, leaf, path)
+            node[idx] = value
+        else:
+            raise ValueError(f"--set {item!r}: {path!r} does not reach a settable field")
+
+
+def _list_entry(node: list, key: str, trail: str):
+    return node[_list_index(node, key, trail)]
+
+
+def _list_index(node: list, key: str, trail: str) -> int:
+    if key.lstrip("-").isdigit():
+        idx = int(key)
+        if -len(node) <= idx < len(node):
+            return idx
+        raise ValueError(f"--set: index {idx} out of range at {trail!r}")
+    for i, entry in enumerate(node):
+        if isinstance(entry, dict) and entry.get("name") == key:
+            return i
+    names = [e.get("name") for e in node if isinstance(e, dict)]
+    raise ValueError(f"--set: no entry named {key!r} at {trail!r} (have: {names})")
+
+
+def load_spec(path: Union[str, Path], overrides: Optional[list[str]] = None) -> EnvSpec:
     raw = yaml.safe_load(Path(path).read_text())
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: spec must be a YAML mapping")
+    if overrides:
+        apply_overrides(raw, list(overrides))
     return EnvSpec.model_validate(raw)

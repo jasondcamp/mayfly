@@ -29,8 +29,13 @@ git clone https://github.com/jasondcamp/mayfly && cd mayfly && uv sync
 ## First environment
 
 ```bash
-mayfly up examples/env.yaml
+mayfly up examples/env-minimal.yaml   # one database + the dragonfly dashboard
+mayfly up examples/env.yaml           # or the kitchen sink
 ```
+
+The repo's `examples/` directory has runnable specs from a one-database
+starter up through per-PR CI templates and multi-engine cache demos, each
+with a header explaining what it shows.
 
 Watch it provision: emulator up, S3 buckets, postgres via the RDS API,
 caches, Kafka, DynamoDB tables, an ALB, then your apps — each gated on a
@@ -97,3 +102,22 @@ The seed hashes to the environment's name. Same seed → same environment
 mayfly up env.yaml --seed pr-1234           # CI: one env per PR
 mayfly up env.yaml --seed scratch-$(whoami) # personal sandbox
 ```
+
+## Override spec fields with `--set`
+
+`up` and `render` take repeatable `--set path.to.field=value` overrides,
+applied to the spec before validation — so CI can deploy PR images without
+templating the YAML:
+
+```bash
+mayfly up env.yaml --seed pr-1234 \
+  --set apps.backend.image=ghcr.io/acme/backend:pr-1234 \
+  --set apps.backend.replicas=1
+```
+
+Paths walk maps by key and named lists by entry name
+(`services.rds.appdb.dbName=other`) or index (`services.s3.buckets.0=tmp`).
+Scalars only, and intermediate keys must already exist — a typo'd app name
+errors with the list of valid names instead of silently deploying a stray
+app. `mayfly render env.yaml --set ...` previews the result without touching
+the cluster.

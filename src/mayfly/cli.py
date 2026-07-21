@@ -30,7 +30,13 @@ from .emulators import (
     resolve_image,
 )
 from .k8s import ClusterUnreachable, K8s, summarize_pods
-from .manifests import app_checks, app_ingress_host, app_manifests
+from .manifests import (
+    app_checks,
+    app_ingress_host,
+    app_manifests,
+    init_app_config_hash,
+    init_app_manifest,
+)
 from .naming import env_name, namespace_for
 from .provisioners import ProvisionContext, provision_all, resolve_backend
 from .spec import EnvSpec, load_spec, parse_ttl
@@ -67,6 +73,12 @@ KCFG_OPT = typer.Option(None, "--kubeconfig", help="kubeconfig file (default: st
 SEED_OPT = typer.Option(
     None, "--seed", help="override the spec's seed (selects/creates a different environment)"
 )
+SET_OPT = typer.Option(
+    [],
+    "--set",
+    help="override a spec field before validation, path.to.field=value "
+    "(repeatable; e.g. --set apps.backend.image=ghcr.io/acme/backend:pr-42)",
+)
 
 
 def _say(msg: str) -> None:
@@ -77,9 +89,13 @@ def _detail(msg: str) -> None:
     typer.echo(f"    {msg}")
 
 
-def _load(spec_file: Path, seed: Optional[str] = None) -> EnvSpec:
+def _load(
+    spec_file: Path,
+    seed: Optional[str] = None,
+    overrides: Optional[list[str]] = None,
+) -> EnvSpec:
     try:
-        spec = load_spec(spec_file)
+        spec = load_spec(spec_file, overrides)
     except Exception as e:
         typer.echo(f"spec error: {e}", err=True)
         raise typer.Exit(1)
@@ -135,6 +151,7 @@ def version():
 def up(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
     seed: Optional[str] = SEED_OPT,
+    overrides: list[str] = SET_OPT,
     context: Optional[str] = CTX_OPT,
     kubeconfig: Optional[str] = KCFG_OPT,
     pull_secret_namespace: str = typer.Option(
@@ -144,7 +161,7 @@ def up(
     ),
 ):
     """Create or update the environment described by the spec."""
-    spec = _load(spec_file, seed)
+    spec = _load(spec_file, seed, overrides)
     needs_patched = []
     if spec.services.alb:
         needs_patched.append("services.alb (ALB HTTP data plane)")
@@ -201,12 +218,46 @@ def up(
         k8s.write_secret(ns, secret_name, data, labels={SERVICE_LABEL: "true"})
         _detail(f"secret {secret_name} written")
 
+    enabled_inits = {n: a for n, a in spec.init_apps.items() if a.enabled}
     enabled_apps = {n: a for n, a in spec.apps.items() if a.enabled}
-    if enabled_apps:
-        pull_secrets = {a.image_pull_secret for a in enabled_apps.values() if a.image_pull_secret}
+    if enabled_inits or enabled_apps:
+        pull_secrets = {
+            a.image_pull_secret
+            for a in [*enabled_inits.values(), *enabled_apps.values()]
+            if a.image_pull_secret
+        }
         for ps in sorted(pull_secrets):
             k8s.copy_secret(ps, pull_secret_namespace, ns)
             _detail(f"pull secret {ps} copied from {pull_secret_namespace}")
+
+    for init_name, init_spec in enabled_inits.items():
+        job_name = f"init-{init_name}"
+        if init_spec.run_policy != "always":
+            prior = k8s.get_job(ns, job_name)
+            prior_ok = prior is not None and (prior.status.succeeded or 0) >= 1
+            if prior_ok and init_spec.run_policy == "once":
+                _detail(f"init {init_name}: skipped (once; already ran)")
+                continue
+            if prior_ok and init_spec.run_policy == "on-change":
+                prior_hash = (prior.metadata.annotations or {}).get("mayfly.dev/config-hash")
+                if prior_hash == init_app_config_hash(init_name, init_spec):
+                    _detail(f"init {init_name}: skipped (on-change; config unchanged)")
+                    continue
+        _say(f"init: {init_name}")
+        k8s.delete_job(ns, job_name)
+        k8s.apply(init_app_manifest(init_name, init_spec), namespace=ns)
+        try:
+            k8s.wait_job(ns, job_name, init_spec.timeout_seconds)
+            _detail(f"{init_name} completed")
+        except RuntimeError as e:
+            typer.echo(f"error: {e}", err=True)
+            logs = k8s.job_logs(ns, job_name)
+            if logs:
+                typer.echo("--- init job logs ---", err=True)
+                typer.echo(logs, err=True)
+            raise typer.Exit(1)
+
+    if enabled_apps:
         _say(f"deploying apps: {', '.join(enabled_apps)}")
         checks_json = json.dumps(app_checks(spec.apps))
         for app_name, app_spec in enabled_apps.items():
@@ -319,15 +370,19 @@ def status(
 def render(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
     seed: Optional[str] = SEED_OPT,
+    overrides: list[str] = SET_OPT,
 ):
     """Print the resolved plan (name, namespace, manifests) without touching the cluster."""
-    spec = _load(spec_file, seed)
+    spec = _load(spec_file, seed, overrides)
     ns = namespace_for(spec.seed, spec.namespace_prefix)
     docs = [
         {"mayfly": {"name": env_name(spec.seed), "namespace": ns, "ttl": spec.ttl,
                     "emulator": resolve_image(spec.emulator), "specHash": spec.spec_hash()}},
         *emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)),
     ]
+    for init_name, init_spec in spec.init_apps.items():
+        if init_spec.enabled:
+            docs.append(init_app_manifest(init_name, init_spec))
     checks_json = json.dumps(app_checks(spec.apps))
     for app_name, app_spec in spec.apps.items():
         if app_spec.enabled:

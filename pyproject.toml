@@ -1,6 +1,6 @@
 [project]
 name = "mayfly-cli"
-version = "0.1.3"
+version = "0.1.7"
 description = "Short lived ephemeral environments on Kubernetes: one YAML spec, an isolated namespace with emulated AWS + real service pods, TTL teardown"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,7 +35,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/jasondcamp/mayfly"
+Homepage = "https://mayfly.sh"
+Documentation = "https://docs.mayfly.sh"
 Repository = "https://github.com/jasondcamp/mayfly"
 Issues = "https://github.com/jasondcamp/mayfly/issues"
 
@@ -48,6 +49,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mayfly"]
+
+[tool.hatch.build.targets.sdist]
+# the repo also holds the docs site (node_modules!), brand assets, and
+# container build contexts — none of which belong in the Python sdist
+only-include = ["src", "tests"]
 
 [tool.ruff]
 line-length = 100

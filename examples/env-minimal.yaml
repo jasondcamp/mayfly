@@ -1,0 +1,25 @@
+# The smallest useful environment: one postgres database provisioned
+# through the real RDS API, and the dragonfly dashboard to prove it works.
+#
+#   mayfly up examples/env-minimal.yaml
+#   open http://dragonfly.<namespace>.localtest.me/
+#
+# dragonfly discovers the database via the AWS control plane (no secrets
+# to wire) and round-trips an insert+select; apps that need the database
+# would add `secrets: [rds-appdb]` and read DATABASE_URL.
+apiVersion: mayfly/v1alpha1
+seed: minimal-1
+ttl: 4h
+
+services:
+  rds:
+    - name: appdb
+      engine: postgres
+      dbName: app
+
+apps:
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, timeoutSeconds: 30}
+    ingress: {}

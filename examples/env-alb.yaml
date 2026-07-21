@@ -9,7 +9,7 @@ services: {}          # LB testing only; no data services needed
 
 apps:
   hello:
-    image: <ACCOUNT>.dkr.ecr.<REGION>.amazonaws.com/mayfly-hello:latest  # push first
+    image: <ACCOUNT>.dkr.ecr.<REGION>.amazonaws.com/mayfly-hello:0.1.3  # push first
     port: 8080
     replicas: 2
     readiness: {path: /healthz}

@@ -333,3 +333,31 @@ def test_aws_api_ingress_opt_in():
         opened = emulator_manifests(EmulatorSpec(kind=kind, expose=True), "env-q")
         ing = next(m for m in opened if m["kind"] == "Ingress")
         assert ing["spec"]["rules"][0]["host"] == "aws.env-q.localtest.me"
+
+
+def test_init_app_manifest_shape():
+    from mayfly.manifests import init_app_manifest
+    from mayfly.spec import InitAppSpec
+
+    init = InitAppSpec(
+        image="mycorp/backend:abc",
+        command=["bundle", "exec", "rails", "db:prepare"],
+        secrets=["rds-appdb", {"name": "elasticache-cache-a", "prefix": "CACHE_"}],
+        env={"RAILS_ENV": "test"},
+        timeoutSeconds=300,
+        imagePullSecret="regcred",
+    )
+    job = init_app_manifest("migrate", init)
+    assert job["kind"] == "Job"
+    assert job["metadata"]["name"] == "init-migrate"
+    assert job["spec"]["activeDeadlineSeconds"] == 300
+    pod = job["spec"]["template"]["spec"]
+    assert pod["restartPolicy"] == "Never"
+    assert pod["enableServiceLinks"] is False
+    assert pod["imagePullSecrets"] == [{"name": "regcred"}]
+    c = pod["containers"][0]
+    assert c["command"][0] == "bundle"
+    env = {e["name"]: e["value"] for e in c["env"]}
+    assert env["RAILS_ENV"] == "test"
+    assert env["AWS_ENDPOINT_URL"].startswith("http://aws")
+    assert {"secretRef": {"name": "elasticache-cache-a"}, "prefix": "CACHE_"} in c["envFrom"]

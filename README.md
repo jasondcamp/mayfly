@@ -7,8 +7,8 @@ MSK/Kafka, DynamoDB, ALBs, and app deployments. `mayfly up` materializes it in
 an isolated Kubernetes namespace, `mayfly down` (or the TTL reaper) destroys
 it. No Docker socket, no privileged pods, no real AWS.
 
-**Full documentation: https://docs.mayfly.sh** (source in `docs/`,
-built with `docs/build.sh`).
+**Website: https://mayfly.sh** · **Full documentation: https://docs.mayfly.sh**
+(source in `docs/`, built with `docs/build.sh`).
 
 ## How it works
 
@@ -126,6 +126,12 @@ by name; other lists replace). mayfly re-asserts its invariants afterward
 (selector, `app` label, `enableServiceLinks: false`), so a patch can add
 sidecars, volumes, tolerations, or securityContext but can't silently break
 the wiring the environment depends on.
+
+`examples/` has runnable specs, smallest first: `env-minimal.yaml` (one
+database + the dragonfly dashboard), `env-caches.yaml` (redis/valkey/
+memcached side by side), `env-pr.yaml` (a per-PR CI template driven by
+`--seed`/`--set`), `env.yaml` (the kitchen sink), and `env-alb.yaml`
+(real AWS ALBs on EKS).
 
 Each app becomes a Deployment + Service reachable at `<name>:8080`
 in-namespace. App pods get `AWS_ENDPOINT_URL` plus whatever the listed

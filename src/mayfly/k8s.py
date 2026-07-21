@@ -53,6 +53,7 @@ class K8s:
         self.kubeconfig = kubeconfig
         self.core = client.CoreV1Api()
         self.apps = client.AppsV1Api()
+        self.batch = client.BatchV1Api()
         try:
             # first API contact (/version + discovery) happens here
             self.dyn = dynamic.DynamicClient(client.ApiClient())
@@ -199,6 +200,69 @@ class K8s:
                     raise
             time.sleep(2)
         raise TimeoutError(f"deployment {namespace}/{name} rollout not complete after {timeout}s")
+
+    # ------------------------------------------------------------- jobs
+    def get_job(self, namespace: str, name: str):
+        try:
+            return self.batch.read_namespaced_job(name, namespace)
+        except ApiException as e:
+            if e.status == 404:
+                return None
+            raise
+
+    def delete_job(self, namespace: str, name: str, timeout: int = 120) -> None:
+        """Delete a Job and its pods, waiting until gone (Jobs are immutable,
+        so re-running an init app means recreate)."""
+        try:
+            self.batch.delete_namespaced_job(
+                name, namespace, propagation_policy="Foreground"
+            )
+        except ApiException as e:
+            if e.status == 404:
+                return
+            raise
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                self.batch.read_namespaced_job(name, namespace)
+            except ApiException as e:
+                if e.status == 404:
+                    return
+                raise
+            time.sleep(1)
+        raise TimeoutError(f"job {namespace}/{name} still deleting after {timeout}s")
+
+    def wait_job(self, namespace: str, name: str, timeout: int) -> None:
+        """Wait for Job completion; raise RuntimeError with reason on failure."""
+        deadline = time.monotonic() + timeout + 30  # deadline enforcement margin
+        while time.monotonic() < deadline:
+            j = self.batch.read_namespaced_job(name, namespace)
+            s = j.status
+            if (s.succeeded or 0) >= 1:
+                return
+            for cond in s.conditions or []:
+                if cond.type == "Failed" and cond.status == "True":
+                    raise RuntimeError(
+                        f"init job {name} failed: {cond.reason or ''} {cond.message or ''}".strip()
+                    )
+            time.sleep(2)
+        raise RuntimeError(f"init job {name} did not complete within {timeout}s")
+
+    def job_logs(self, namespace: str, name: str, tail: int = 40) -> str:
+        pods = self.core.list_namespaced_pod(
+            namespace, label_selector=f"job-name={name}"
+        ).items
+        chunks = []
+        for p in pods[-2:]:
+            try:
+                resp = self.core.read_namespaced_pod_log(
+                    p.metadata.name, namespace, tail_lines=tail,
+                    _preload_content=False,
+                )
+                chunks.append(resp.data.decode(errors="replace"))
+            except ApiException:
+                pass
+        return "\n".join(chunks).strip()
 
     def restart_deployment(self, namespace: str, name: str) -> None:
         """Trigger a rolling restart (same mechanism as kubectl rollout restart)."""

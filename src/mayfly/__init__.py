@@ -1,6 +1,6 @@
 """mayfly — short lived ephemeral environment infrastructure."""
 
-__version__ = "0.1.3"
+__version__ = "0.1.7"
 
 MANAGED_LABEL = "mayfly.dev/managed"
 SERVICE_LABEL = "mayfly.dev/service"  # marks provisioned service secrets

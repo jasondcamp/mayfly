@@ -121,13 +121,68 @@ apps:
 If you find yourself writing the same patch in every spec, that's the
 signal it should graduate to a dedicated field — open an issue.
 
+## Init apps — one-shot environment initialization
+
+`initApps:` entries are Kubernetes **Jobs** that run after services are
+provisioned (and their secrets written) and **before apps deploy** —
+sequentially, in declaration order, **on every `up`**. They must therefore
+be idempotent; that's a feature, not a caveat — it's what makes `up`
+converge. Failure fails `up` with the job's logs printed.
+
+```yaml
+initApps:
+  migrate:
+    image: mycorp/backend:PR-456-abc123     # usually the app's own image
+    command: ["bundle", "exec", "rails", "db:prepare"]
+    secrets: [rds-appdb]
+    env:
+      # migrations go DIRECT to the db — advisory locks and prepared
+      # statements break behind a transaction-pooling pgbouncer
+      DATABASE_URL: postgresql://app:apppass@rds-appdb:5432/app
+    timeoutSeconds: 600                     # default 600
+    runPolicy: on-change                    # always (default) | once | on-change
+  seed-fixtures:
+    image: mycorp/backend:PR-456-abc123
+    command: ["bundle", "exec", "rake", "fixtures:load"]
+    secrets: [rds-appdb]
+```
+
+`runPolicy` controls when an entry runs across `up`s: **always** (default —
+every up; converge semantics), **once** (only if it has never succeeded in
+this environment), **on-change** (when the entry's own config — image,
+command, env, ... — differs from its last successful run; the fit for
+migrations that should fire exactly when you bump the code version).
+The completed Job doubles as the ledger via a config-hash annotation, so
+no external state is involved.
+
+Fields mirror apps where they make sense (`image`, `command`, `args`,
+`env`, `secrets` incl. prefixes, `resources`, `imagePullSecret`, `patch`,
+`enabled`) — there's no port/replicas/readiness/ingress because nothing
+serves. Use init apps for anything that initializes the *environment*:
+Rails/Flyway/Alembic migrations, fixture loads, one-shot `aws` setup calls
+(the resident controller variant of such tools belongs in `apps:`).
+Compared to an initContainer, an init app runs once per `up` instead of
+once per pod per replica, has its own logs and timeout, and isn't welded to
+one Deployment's lifecycle. `mayfly restart` does not rerun them; `up`
+does.
+
 ## Updating running apps
 
 Two flows, both without `down`:
 
-- **New image tag** (the published flow): change the tag in the spec, run
-  `mayfly up` — server-side apply means only changed Deployments roll, and
-  services/data are untouched.
+- **New image tag** (the published flow): change the tag in the spec — or
+  override it without editing anything via `--set`:
+
+  ```bash
+  mayfly up env.yaml --seed pr-42 \
+    --set apps.backend.image=ghcr.io/acme/backend:pr-42 \
+    --set initApps.migrate.image=ghcr.io/acme/backend:pr-42
+  ```
+
+  Server-side apply means only changed Deployments roll, and services/data
+  are untouched. Init apps run first, so with `runPolicy: on-change` on a
+  migrations entry this is the whole PR pipeline: migrations fire exactly
+  when the version bumps, before the app updates.
 - **Same tag, new content** (the dev loop — you rebuilt and pushed/imported
   over an existing tag): apply sees no diff, so use
   `mayfly restart env.yaml` (all apps) or `--app caddis-api --app ...` for
