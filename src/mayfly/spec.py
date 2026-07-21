@@ -38,6 +38,11 @@ class EmulatorSpec(_StrictModel):
     kind: Literal["ministack", "floci"] = "ministack"
     image: Optional[str] = None  # default: pinned per kind (see emulators.EMULATORS)
     version: Optional[str] = None  # image tag; default: pinned per kind
+    # expose the (unauthenticated) AWS API at aws.<namespace>.localtest.me via
+    # the cluster ingress — laptop CLI/SDK convenience. Default OFF: the API
+    # can mutate environment state and read Secrets Manager values, so it
+    # should never be reachable by default on shared clusters.
+    expose: bool = False
 
     @field_validator("version")
     @classmethod

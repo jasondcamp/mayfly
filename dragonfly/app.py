@@ -83,7 +83,10 @@ def check_memcached(node):
         from pymemcache.client.base import Client
 
         host, port = node["Address"], node["Port"]
-        c = Client((host, int(port)), connect_timeout=5, timeout=5)
+        ck = ("memcached", host, port)
+        c = _clients.get(ck)
+        if c is None:
+            c = _clients[ck] = Client((host, int(port)), connect_timeout=5, timeout=5)
         try:
             token = str(uuid.uuid4())
             key = f"dragonfly-{token[:8]}"
@@ -92,8 +95,13 @@ def check_memcached(node):
             assert got is not None and got.decode() == token, f"set/get mismatch: {got!r}"
             c.delete(key)
             return f"memcached set/get round-trip ok via {host}:{port}"
-        finally:
-            c.close()  # ALWAYS: leaked conns exhaust memcached's 1024 limit
+        except Exception:
+            _clients.pop(ck, None)  # reconnect fresh next sweep
+            try:
+                c.close()
+            except Exception:
+                pass
+            raise
 
     return _check(run)
 
@@ -103,7 +111,12 @@ def check_redis(node):
         import redis
 
         host, port = node["Address"], node["Port"]
-        r = redis.Redis(host=host, port=port, socket_timeout=5, socket_connect_timeout=5)
+        ck = ("redis", host, port)
+        r = _clients.get(ck)
+        if r is None:
+            r = _clients[ck] = redis.Redis(
+                host=host, port=port, socket_timeout=5, socket_connect_timeout=5
+            )
         try:
             token = str(uuid.uuid4())
             key = f"dragonfly:{token}"
@@ -112,8 +125,13 @@ def check_redis(node):
             assert got is not None and got.decode() == token, f"SET/GET mismatch: {got!r}"
             r.delete(key)
             return f"SET/GET round-trip ok via {host}:{port}"
-        finally:
-            r.close()
+        except Exception:
+            _clients.pop(ck, None)
+            try:
+                r.close()
+            except Exception:
+                pass
+            raise
 
     return _check(run)
 
@@ -208,6 +226,29 @@ def check_secret(sm, name):
     return _check(run)
 
 
+def check_app(chk):
+    def run():
+        if chk["kind"] == "tcp":
+            import socket
+
+            host, port = chk["target"].rsplit(":", 1)
+            with socket.create_connection((host, int(port)), timeout=5):
+                pass
+            return f"tcp connect ok ({chk['target']})"
+        import urllib.error
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(chk["target"], timeout=5) as resp:
+                code = resp.status
+        except urllib.error.HTTPError as e:
+            code = e.code
+        assert code < 400, f"HTTP {code} from {chk['target']}"
+        return f"HTTP {code} ({chk['target']})"
+
+    return _check(run)
+
+
 def run_all():
     """Discover via the AWS control plane, then verify each instance."""
     report = {}
@@ -221,6 +262,19 @@ def run_all():
                 "kind": kind,
                 "error": f"{type(e).__name__}: {e}",
             }
+
+    def apps():
+        raw = os.environ.get("MAYFLY_APP_CHECKS")
+        if not raw:
+            return
+        self_name = os.environ.get("MAYFLY_APP_NAME", "")
+        for chk in json.loads(raw):
+            if chk["name"] == self_name:
+                continue  # never health-check ourselves (healthz recursion)
+            r = check_app(chk)
+            r["kind"] = "app"
+            r["status"] = "deployed"
+            report[chk["name"]] = r
 
     def rds():
         for inst in _aws("rds").describe_db_instances()["DBInstances"]:
@@ -299,6 +353,7 @@ def run_all():
             r["status"] = lb.get("State", {}).get("Code", "unknown").lower()
             report[lb["LoadBalancerName"]] = r
 
+    _try("app", apps)
     _try("rds", rds)
     _try("elasticache", elasticache)
     _try("msk", msk)
@@ -311,6 +366,12 @@ def run_all():
 
 _cache_lock = threading.Lock()
 _cache = {"at": 0.0, "report": None}
+# persistent data-plane clients, keyed by (kind, host, port): one long-lived
+# connection reused across sweeps instead of connect/close churn — kubedock's
+# reverse proxy leaks upstream sockets per connection, which exhausts
+# memcached's 1024-conn limit in hours if every sweep reconnects.
+_clients = {}
+_ever_healthy = threading.Event()  # readiness latch: see /readyz
 CACHE_TTL = 5.0
 
 
@@ -387,11 +448,12 @@ PAGE = """<!doctype html>
 <div class="tiles" id="tiles"></div>
 <footer>Auto-refreshes every 5s · <a href="/api">JSON</a> · <span id="stamp"></span></footer>
 <script>
-const ORDER = ["alb", "rds", "elasticache", "msk", "dynamodb", "s3", "secretsmanager"];
+const ORDER = ["app", "alb", "rds", "elasticache", "msk", "dynamodb", "s3", "secretsmanager"];
 const TITLES = { rds: ["RDS", "postgres"], elasticache: ["ELASTICACHE", "redis"],
                  msk: ["MSK", "kafka"], dynamodb: ["DYNAMODB", "dynamo"],
                  s3: ["S3", "buckets"], alb: ["ALB", "elbv2"],
-                 secretsmanager: ["SECRETS MANAGER", "secretsmanager"] };
+                 secretsmanager: ["SECRETS MANAGER", "secretsmanager"],
+                 app: ["APPS", "env.yaml readiness"] };
 const SLOW_MS = 1000;
 function row(label, c) {
   const slow = c.ok && c.ms >= SLOW_MS;
@@ -448,8 +510,18 @@ class Handler(BaseHTTPRequestHandler):
         else:
             report = cached_report()
             if self.path == "/healthz":
+                # strict, current-state truth
                 code = 200 if healthy(report) else 503
                 body = b"ok\n" if code == 200 else b"unhealthy\n"
+                ctype = "text/plain"
+            elif self.path == "/readyz":
+                # readiness latch: strict until the environment is first fully
+                # healthy, then stays ready — so a later failure shows red
+                # tiles on a REACHABLE dashboard instead of an ingress 503.
+                if healthy(report):
+                    _ever_healthy.set()
+                code = 200 if _ever_healthy.is_set() else 503
+                body = b"ok\n" if code == 200 else b"not ready\n"
                 ctype = "text/plain"
             else:  # /api (and anything else): JSON report
                 code = 200

@@ -39,7 +39,9 @@ readiness probe. The summary prints your URLs:
 ```text
   Namespace: merry-blonde-stoat
   Dragonfly: http://dragonfly.merry-blonde-stoat.localtest.me/
+  Caddis:    http://caddis.merry-blonde-stoat.localtest.me/
   ALB hello-alb: http://hello-alb.merry-blonde-stoat.localtest.me/
+  AWS API:   http://aws.merry-blonde-stoat.localtest.me
 ```
 
 `*.localtest.me` resolves to `127.0.0.1` for free — with the k3d port
@@ -60,6 +62,29 @@ mayfly reap [--dry-run]            # delete every expired environment
 All cluster-touching commands take `--context` / `--kubeconfig`. `down` and
 `reap` refuse namespaces not labeled `mayfly.dev/managed=true`, so mayfly
 can never delete something it didn't create.
+
+## Use the AWS CLI against your environment
+
+With `emulator: {expose: true}` in the spec (on by default in the example —
+see [the security note](spec/environment#laptop-access-to-the-aws-api)
+before using it on a shared cluster), the AWS API is at
+`aws.<namespace>.localtest.me`. Set up a profile once:
+
+```ini
+# ~/.aws/config
+[profile mayfly]
+region = us-east-1
+endpoint_url = http://aws.<namespace>.localtest.me
+
+# ~/.aws/credentials
+[mayfly]
+aws_access_key_id = test
+aws_secret_access_key = test
+```
+
+Then everything just works: `aws --profile mayfly s3 ls`,
+`aws --profile mayfly rds describe-db-instances`,
+`aws --profile mayfly secretsmanager list-secrets`, ...
 
 ## Seeds are identity
 

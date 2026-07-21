@@ -1,5 +1,6 @@
 """mayfly CLI: up / down / status / list / render / reap."""
 
+import json
 import logging
 import sys
 from datetime import datetime, timedelta, timezone
@@ -29,7 +30,7 @@ from .emulators import (
     resolve_image,
 )
 from .k8s import ClusterUnreachable, K8s, summarize_pods
-from .manifests import app_ingress_host, app_manifests
+from .manifests import app_checks, app_ingress_host, app_manifests
 from .naming import env_name, namespace_for
 from .provisioners import ProvisionContext, provision_all, resolve_backend
 from .spec import EnvSpec, load_spec, parse_ttl
@@ -207,8 +208,9 @@ def up(
             k8s.copy_secret(ps, pull_secret_namespace, ns)
             _detail(f"pull secret {ps} copied from {pull_secret_namespace}")
         _say(f"deploying apps: {', '.join(enabled_apps)}")
+        checks_json = json.dumps(app_checks(spec.apps))
         for app_name, app_spec in enabled_apps.items():
-            k8s.apply_all(app_manifests(app_name, app_spec, ns), ns)
+            k8s.apply_all(app_manifests(app_name, app_spec, ns, checks_json), ns)
         for app_name in enabled_apps:
             k8s.wait_deployment(ns, app_name)
 
@@ -225,7 +227,11 @@ def up(
             f"(load-balanced -> {alb.target_app})"
         )
     typer.echo(f"  Secrets:   kubectl -n {ns} get secrets")
-    typer.echo(f"  AWS API:   kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
+    if spec.emulator.expose:
+        typer.echo(f"  AWS API:   http://aws.{ns}.localtest.me  "
+                   f"(AWS_ENDPOINT_URL; creds test/test)")
+    else:
+        typer.echo(f"  AWS API:   kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
     typer.echo(f"  Teardown:  mayfly down {spec_file}")
 
 
@@ -322,9 +328,10 @@ def render(
                     "emulator": resolve_image(spec.emulator), "specHash": spec.spec_hash()}},
         *emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)),
     ]
+    checks_json = json.dumps(app_checks(spec.apps))
     for app_name, app_spec in spec.apps.items():
         if app_spec.enabled:
-            docs.extend(app_manifests(app_name, app_spec, ns))
+            docs.extend(app_manifests(app_name, app_spec, ns, checks_json))
     typer.echo(yaml.safe_dump_all(docs, sort_keys=False))
 
 

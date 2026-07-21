@@ -18,6 +18,7 @@ const sidebars = {
       items: [
         'guides/internal-albs',
         'guides/dragonfly',
+        'guides/caddis',
         'guides/testing',
         'guides/images',
       ],

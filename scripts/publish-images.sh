@@ -16,7 +16,7 @@ command -v docker >/dev/null || { echo "missing dependency: docker" >&2; exit 1;
 docker buildx inspect mayfly-builder >/dev/null 2>&1 \
   || docker buildx create --name mayfly-builder --driver docker-container >/dev/null
 
-for pair in dragonfly:dragonfly hello:hello ministack:emulator; do
+for pair in dragonfly:dragonfly hello:hello ministack:emulator caddis:caddis caddis-frontend:caddis-frontend; do
   name="mayfly-${pair%%:*}"; dir="${pair##*:}"
   echo "==> ${REGISTRY}/${name}:${VERSION} (+ latest) from ${dir}/"
   docker buildx build --builder mayfly-builder \

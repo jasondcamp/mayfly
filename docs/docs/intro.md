@@ -36,13 +36,17 @@ mayfly up env.yaml
 - **dragonfly**, the bundled verifier, discovers every service through the
   AWS control plane and round-trips real data through each — a live
   dashboard proving your environment actually works.
+- **caddis**, the sample app, shows what building on mayfly looks like: a
+  file uploader whose one user action exercises S3, postgres-via-pgbouncer,
+  Kafka (with a worker), redis, and Secrets Manager — with a per-file
+  pipeline timeline in the UI.
 
 ## Where to go next
 
 - [Getting started](getting-started) — local cluster to first environment
   in a few minutes.
 - [Spec reference](spec/environment) — every field.
-- [Guides](guides/internal-albs) — internal ALBs, dragonfly, testing, image
-  publishing.
+- [Guides](guides/internal-albs) — internal ALBs, dragonfly, the
+  [caddis sample app](guides/caddis), testing, image publishing.
 - [Architecture](architecture) — how the emulator topology works and the
   hard-won gotchas behind it.

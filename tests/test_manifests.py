@@ -300,3 +300,36 @@ def test_app_tcp_app_shape():
 def test_app_service_port_default_unchanged():
     (_dep, svc) = app_manifests("web", AppSpec(image="i:1", port=3000), "ns1")
     assert svc["spec"]["ports"] == [{"port": 8080, "targetPort": 3000}]
+
+
+def test_app_checks_derived_from_readiness():
+    from mayfly.manifests import app_checks
+
+    apps = {
+        "hello": AppSpec(image="h:1", port=8080, readiness={"path": "/healthz"}),
+        "pgbouncer": AppSpec(image="p:1", port=5432, servicePort=5432, readiness={"tcp": True}),
+        "noprobe": AppSpec(image="n:1"),
+        "off": AppSpec(image="o:1", enabled=False, readiness={"path": "/"}),
+    }
+    checks = app_checks(apps)
+    assert {"name": "hello", "kind": "http", "target": "http://hello:8080/healthz"} in checks
+    assert {"name": "pgbouncer", "kind": "tcp", "target": "pgbouncer:5432"} in checks
+    assert len(checks) == 2  # no readiness / disabled -> no check
+
+
+def test_app_env_carries_identity_and_checks():
+    (dep, _svc) = app_manifests(
+        "web", AppSpec(image="i:1"), "ns1", checks_json='[{"name":"web"}]'
+    )
+    env = {e["name"]: e["value"] for e in dep["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["MAYFLY_APP_NAME"] == "web"
+    assert env["MAYFLY_APP_CHECKS"] == '[{"name":"web"}]'
+
+
+def test_aws_api_ingress_opt_in():
+    for kind in ("ministack", "floci"):
+        closed = emulator_manifests(EmulatorSpec(kind=kind), "env-q")
+        assert not any(m["kind"] == "Ingress" for m in closed)  # default OFF
+        opened = emulator_manifests(EmulatorSpec(kind=kind, expose=True), "env-q")
+        ing = next(m for m in opened if m["kind"] == "Ingress")
+        assert ing["spec"]["rules"][0]["host"] == "aws.env-q.localtest.me"

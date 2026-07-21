@@ -42,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack]
+        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend]
         platform:
           - linux/amd64
           - linux/arm64
@@ -53,6 +53,10 @@ jobs:
             context: hello
           - image: mayfly-ministack
             context: emulator
+          - image: mayfly-caddis
+            context: caddis
+          - image: mayfly-caddis-frontend
+            context: caddis-frontend
     permissions:
       contents: read
       packages: write
@@ -112,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack]
+        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend]
     permissions:
       contents: read
       packages: write

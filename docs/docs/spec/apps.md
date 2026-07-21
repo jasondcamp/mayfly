@@ -9,6 +9,11 @@ Every app becomes a Deployment + Service reachable in-namespace at
 are provisioned, so an app never boots before its database exists, and each
 readiness probe gates `up` completing.
 
+Each app's `readiness` doubles as its health check on dragonfly's APPS
+card — one definition drives both the kubelet gate and live monitoring.
+Every app pod also receives `MAYFLY_APP_NAME` (its own name) and
+`MAYFLY_APP_CHECKS` (the environment's app-check list) in its env.
+
 A worked TCP-app example — pgbouncer in front of the RDS postgres (in
 production it might live on an EC2 instance; in an ephemeral environment a
 container is the pragmatic stand-in). The `rds-appdb` secret's

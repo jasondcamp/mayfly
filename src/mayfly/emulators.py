@@ -161,6 +161,37 @@ def _kubedock_container() -> dict:
     }
 
 
+def _aws_ingress(namespace: str) -> dict:
+    """Opt-in (emulator.expose) ingress for the AWS API: laptop CLI/SDK
+    access at aws.<namespace>.localtest.me with no port-forward."""
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": {"name": "aws"},
+        "spec": {
+            "rules": [
+                {
+                    "host": f"aws.{namespace}.localtest.me",
+                    "http": {
+                        "paths": [
+                            {
+                                "path": "/",
+                                "pathType": "Prefix",
+                                "backend": {
+                                    "service": {
+                                        "name": AWS_SERVICE,
+                                        "port": {"number": AWS_PORT},
+                                    }
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
+        },
+    }
+
+
 def _aws_service(extra_ports: bool) -> dict:
     ports = [{"name": "awsapi", "port": AWS_PORT, "targetPort": AWS_PORT}]
     if extra_ports:
@@ -242,11 +273,14 @@ def emulator_manifests(
                 "limits": {"memory": "512Mi"},
             },
         }
-        return [
+        manifests = [
             *_kubedock_rbac(namespace),
             _deployment([_kubedock_container(), ministack], service_account="kubedock"),
             _aws_service(extra_ports=True),
         ]
+        if em.expose:
+            manifests.append(_aws_ingress(namespace))
+        return manifests
 
     floci = {
         "name": "floci",
@@ -259,4 +293,7 @@ def emulator_manifests(
             "limits": {"memory": "512Mi"},
         },
     }
-    return [_deployment([floci]), _aws_service(extra_ports=False)]
+    manifests = [_deployment([floci]), _aws_service(extra_ports=False)]
+    if em.expose:
+        manifests.append(_aws_ingress(namespace))
+    return manifests

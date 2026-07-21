@@ -60,8 +60,17 @@ echo "== dragonfly: secret-driven connectivity report"
 "${K[@]}" run smoke-dragonfly-hz --rm -i --restart=Never --image=busybox:1.36 \
   --command -- sh -c 'wget -qO- http://dragonfly:8080/healthz && echo " (healthz 200)"'
 
-echo "== echo app reachable in-cluster"
-"${K[@]}" run smoke-echo --rm -i --restart=Never --image=busybox:1.36 \
-  --command -- wget -qO- http://echo:8080 | head -c 200 || true
-echo
+echo "== caddis: full-stack upload pipeline (s3+pg+kafka+redis+secrets in one call)"
+"${K[@]}" run smoke-caddis --rm -i --restart=Never --image=curlimages/curl:8.10.1 \
+  --command -- sh -c '
+    echo smoke-payload > /tmp/f.txt
+    curl -s -F "file=@/tmp/f.txt" http://caddis-api:8080/api/files
+    for i in $(seq 1 15); do
+      S=$(curl -s http://caddis-api:8080/api/files | grep -o "\"status\":\"processed\"" | head -1)
+      [ -n "$S" ] && break; sleep 2
+    done
+    echo
+    curl -s http://caddis-api:8080/api/stats
+    [ -n "$S" ] && echo " CADDIS PIPELINE PROCESSED" || { echo " CADDIS PIPELINE TIMEOUT"; exit 1; }'
+
 echo "ALL SMOKE TESTS PASSED"

@@ -21,9 +21,15 @@ instance found:
 | s3 | put + get + delete an object per bucket |
 | alb | an HTTP request through the data plane |
 | secretsmanager | get-secret-value per secret, verified non-empty |
+| apps | each app's own `readiness` check from the spec (HTTP or TCP), through its Service |
 
 Declare a service in the spec and a tile appears — no secrets to mount, no
-lists to maintain. Adding a service kind to mayfly means adding its
+lists to maintain. Apps are covered the same way with zero extra config:
+mayfly derives each app's check from the `readiness` block it already has
+(`hello` → `GET /healthz`, `pgbouncer` → TCP `:5432`) and hands the list to
+dragonfly via the injected `MAYFLY_APP_CHECKS` env var — an APPS card shows
+every app's live health (dragonfly skips checking itself). Apps without a
+`readiness` have no defined check, so no tile. Adding a service kind to mayfly means adding its
 dragonfly check in the same change; that invariant is project policy.
 
 ## Interfaces
@@ -34,10 +40,13 @@ dragonfly check in the same change; that invariant is project policy.
   with words; failures print the error inline.
 - **`/api`** — the same report as JSON, including each instance's AWS
   `status` field.
-- **`/healthz`** — 200 only when every discovered instance verifies. Wired
-  as dragonfly's readiness probe, so the pod only goes **Ready** once the
-  environment provably works — `mayfly up` succeeding is itself a
-  connectivity test.
+- **`/healthz`** — strict current-state truth: 200 only when every
+  discovered instance and app verifies right now.
+- **`/readyz`** — the readiness latch: strict until the environment first
+  goes fully healthy (so `mayfly up` still gates on proven connectivity),
+  then stays ready for the pod's lifetime — a later failure shows red tiles
+  on a *reachable* dashboard instead of taking the dashboard down with the
+  thing it's reporting on. Point the spec's `readiness` at `/readyz`.
 
 ## In the spec
 

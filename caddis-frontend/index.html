@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>caddis</title>
+<style>
+  :root {
+    --surface: #1a1c1f; --tile: #26292d; --border: #34383d;
+    --ink: #e6e8ea; --ink-2: #a8adb3; --ink-3: #7c8187;
+    --green: #4ade80; --amber: #fab219; --red: #ff5f56;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--surface); color: var(--ink);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+         max-width: 880px; margin: 0 auto; padding: 36px 24px; }
+  h1 { font-size: 22px; font-weight: 650; }
+  h1 .fly { color: var(--ink-3); font-weight: 400; }
+  .sub { color: var(--ink-2); font-size: 13px; margin: 4px 0 24px; }
+  .stats { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .stat { background: var(--tile); border: 1px solid var(--border);
+          border-radius: 8px; padding: 12px 18px; min-width: 130px; }
+  .stat .n { font-size: 22px; font-weight: 650; color: var(--green); }
+  .stat .l { font-size: 12px; color: var(--ink-2); text-transform: uppercase;
+             letter-spacing: .05em; }
+  .drop { display: block; border: 2px dashed var(--border); border-radius: 10px;
+          padding: 26px; text-align: center; color: var(--ink-2);
+          margin: 4px 0 28px; transition: border-color .15s; cursor: pointer; }
+  .drop.hot, .drop:hover { border-color: var(--green); color: var(--ink); }
+  .drop input { display: none; }
+  h2 { font-size: 13px; font-weight: 650; text-transform: uppercase;
+       letter-spacing: .06em; color: var(--ink-2); margin: 22px 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { padding: 7px 10px; border-top: 1px solid var(--border); text-align: left; }
+  th { color: var(--ink-3); font-size: 12px; text-transform: uppercase;
+       letter-spacing: .05em; border-top: none; }
+  td.size, td.sum { color: var(--ink-2); font: 13px ui-monospace, monospace;
+                    white-space: nowrap; }
+  td.name { overflow-wrap: anywhere; }
+  .st { font-weight: 650; white-space: nowrap; }
+  .st.processed { color: var(--green); }
+  .st.uploaded { color: var(--amber); }
+  a { color: var(--green); }
+  tr.file-row { cursor: pointer; }
+  tr.file-row:hover td { background: rgba(74, 222, 128, 0.04); }
+  tr.detail td { background: var(--tile); padding: 10px 14px; }
+  .timeline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+              font: 12.5px ui-monospace, monospace; }
+  .step { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 6px; padding: 4px 9px; }
+  .step b { color: var(--green); font-weight: 650; }
+  .step.lag b { color: var(--amber); }
+  .step.total { border-color: var(--green); }
+  .arrow { color: var(--ink-3); }
+  .feed { list-style: none; font: 13px ui-monospace, monospace; color: var(--ink-2); }
+  .feed li { padding: 4px 0; border-top: 1px solid var(--border);
+             display: flex; gap: 8px; align-items: baseline; }
+  .feed .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; }
+  .feed .when { color: var(--ink-3); white-space: nowrap; }
+  .feed .ev-processed { color: var(--green); }
+  .feed .ev-uploaded { color: var(--amber); }
+</style></head>
+<body>
+<h1>cad<span class="fly">dis</span></h1>
+<div class="sub">the little file collector — S3 + postgres/pgbouncer + kafka + redis + secrets manager, end to end</div>
+
+<div class="stats">
+  <div class="stat"><div class="n" id="s-files">–</div><div class="l">files</div></div>
+  <div class="stat"><div class="n" id="s-bytes">–</div><div class="l">stored</div></div>
+  <div class="stat"><div class="n" id="s-processed">–</div><div class="l">processed</div></div>
+</div>
+
+<label class="drop" id="drop">
+  drop a file here or click to choose
+  <input type="file" id="file">
+</label>
+
+<h2>Files</h2>
+<table>
+  <thead><tr><th>name</th><th>size</th><th>status</th><th>sha256</th><th></th></tr></thead>
+  <tbody id="files"><tr><td colspan="5" style="color:var(--ink-3)">loading…</td></tr></tbody>
+</table>
+
+<h2>Pipeline activity</h2>
+<ul class="feed" id="feed"></ul>
+
+<script>
+const fmtBytes = n => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB"
+                    : (n/1048576).toFixed(1) + " MB";
+
+async function refresh() {
+  try {
+    const [files, stats] = await Promise.all([
+      fetch("/api/files").then(r => r.json()),
+      fetch("/api/stats").then(r => r.json()),
+    ]);
+    document.getElementById("s-files").textContent = stats.files;
+    document.getElementById("s-bytes").textContent = fmtBytes(stats.bytes);
+    document.getElementById("s-processed").textContent = stats.processed;
+
+    document.getElementById("files").innerHTML = files.files.length
+      ? files.files.map(f => `<tr class="file-row" onclick="toggle('${f.id}')">
+          <td class="name">${f.name}</td><td class="size">${fmtBytes(f.size)}</td>
+          <td class="st ${f.status}">${f.status === "processed" ? "✓" : "⏳"} ${f.status}</td>
+          <td class="sum">${f.checksum ? f.checksum.slice(0, 12) : "–"}</td>
+          <td><a href="/api/files/${f.id}/download?token=${f.token}"
+                 onclick="event.stopPropagation()">download</a></td>
+        </tr>` + (expanded.has(f.id) ? `<tr class="detail"><td colspan="5">
+          ${timeline(f)}</td></tr>` : "")).join("")
+      : '<tr><td colspan="5" style="color:var(--ink-3)">nothing collected yet</td></tr>';
+
+    document.getElementById("feed").innerHTML = stats.activity.map(a =>
+      `<li><span class="ev-${a.event.split(".")[1]}">${a.event}</span>
+       <span class="what">${a.id}${a.name ? " · " + a.name : ""}${a.checksum ? " · " + a.checksum : ""}</span>
+       <span class="when">${a.at.replace("T", " ").replace("+00:00", "")}</span></li>`
+    ).join("");
+  } catch (e) { /* transient; next poll */ }
+}
+
+const expanded = new Set();
+function toggle(id) {
+  expanded.has(id) ? expanded.delete(id) : expanded.add(id);
+  refresh();
+}
+
+function timeline(f) {
+  const st = f.steps || {};
+  const chip = (label, ms, cls) => ms == null ? "" :
+    `<span class="step ${cls||""}">${label} <b>${ms} ms</b></span><span class="arrow">→</span>`;
+  let html = '<div class="timeline">';
+  html += `<span class="step">received <b>${(st.received||f.created_at).slice(11,23)}</b></span><span class="arrow">→</span>`;
+  html += chip("s3 put", st.s3_put_ms);
+  html += chip("db insert", st.db_insert_ms);
+  html += chip("kafka publish", st.kafka_publish_ms);
+  html += chip("worker pickup", st.worker_pickup_lag_ms, "lag");
+  html += chip("checksum", st.checksum_ms);
+  html += f.pipeline_ms != null
+    ? `<span class="step total">pipeline total <b>${f.pipeline_ms} ms</b></span>`
+    : '<span class="step">⏳ awaiting worker…</span>';
+  return html + "</div>";
+}
+
+async function upload(file) {
+  const body = new FormData();
+  body.append("file", file);
+  await fetch("/api/files", {method: "POST", body});
+  refresh();
+}
+
+const drop = document.getElementById("drop");
+const input = document.getElementById("file");
+input.addEventListener("change", () => input.files[0] && upload(input.files[0]));
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("hot"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("hot"));
+drop.addEventListener("drop", e => {
+  e.preventDefault(); drop.classList.remove("hot");
+  e.dataTransfer.files[0] && upload(e.dataTransfer.files[0]);
+});
+
+refresh(); setInterval(refresh, 3000);
+</script>
+</body></html>

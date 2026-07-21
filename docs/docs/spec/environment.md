@@ -45,7 +45,36 @@ emulator:
   kind: ministack             # ministack | floci (default: ministack)
   image: ghcr.io/jasondcamp/mayfly-ministack   # optional override
   version: "0.1.3"            # image tag; 'latest' is rejected
+  expose: false               # opt-in: AWS API at aws.<namespace>.localtest.me
 ```
+
+### Laptop access to the AWS API
+
+With `expose: true`, the emulator's API is served through the cluster
+ingress at `aws.<namespace>.localtest.me` — the AWS CLI and SDKs on your
+machine work with no port-forward. A profile makes it painless:
+
+```ini
+# ~/.aws/config
+[profile mayfly]
+region = us-east-1
+endpoint_url = http://aws.<namespace>.localtest.me
+
+# ~/.aws/credentials
+[mayfly]
+aws_access_key_id = test
+aws_secret_access_key = test
+```
+
+Then `aws --profile mayfly rds describe-db-instances`, `... s3 ls`, etc.
+
+**Default is off, deliberately**: the emulated API is unauthenticated — it
+can mutate environment state and read Secrets Manager values — so it should
+never be reachable by default on a shared cluster. Without `expose`, use
+`kubectl -n <namespace> port-forward svc/aws 4566:4566` and
+`endpoint_url = http://localhost:4566`. Either way this is a convenience
+for humans: apps under test should keep using the in-cluster
+`AWS_ENDPOINT_URL` mayfly injects.
 
 The emulator runs inside the namespace behind a Service named `aws` on port
 4566. Every app pod gets `AWS_ENDPOINT_URL=http://aws:4566` with

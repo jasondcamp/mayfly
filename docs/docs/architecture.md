@@ -53,6 +53,13 @@ them, and recorded here so future changes don't regress them.
 - **kubedock needs memory headroom**: it holds every reverse-proxy listener
   and container's bookkeeping in RAM; a tight limit gets OOMKilled after a
   day, silently severing all `aws:<port>` data planes.
+- **kubedock's reverse proxy leaks upstream sockets per connection.** A
+  client that connects-and-closes on every request (health checkers,
+  naive scripts) exhausts the backing service's connection limit through
+  the proxy — memcached's default 1024 dies in hours. Long-lived clients
+  through `aws:<port>` endpoints must reuse connections (dragonfly holds
+  one persistent client per cache endpoint for exactly this reason);
+  upstream-fix candidate in kubedock.
 - **Deployment waits need full rollout semantics.** Checking
   `availableReplicas` alone returns during a rolling update while the *old*
   pod still serves — provisioning then lands in the old emulator's memory

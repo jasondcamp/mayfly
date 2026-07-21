@@ -49,8 +49,32 @@ def app_ingress_host(name: str, app: AppSpec, namespace: str) -> str:
     return app.ingress.host or f"{name}.{namespace}.localtest.me"
 
 
-def app_manifests(name: str, app: AppSpec, namespace: str) -> list[dict]:
-    env = {**AWS_ENV, **app.env}
+def app_checks(apps: dict) -> list[dict]:
+    """Health checks derived from each enabled app's readiness spec, reachable
+    through its Service — consumed by observer apps (dragonfly) via the
+    MAYFLY_APP_CHECKS env var."""
+    checks = []
+    for name, app in apps.items():
+        if not app.enabled or not app.readiness:
+            continue
+        if app.readiness.tcp:
+            checks.append({"name": name, "kind": "tcp",
+                           "target": f"{name}:{app.service_port}"})
+        else:
+            checks.append({"name": name, "kind": "http",
+                           "target": f"http://{name}:{app.service_port}{app.readiness.path}"})
+    return checks
+
+
+def app_manifests(
+    name: str, app: AppSpec, namespace: str, checks_json: str = ""
+) -> list[dict]:
+    env = {
+        **AWS_ENV,
+        "MAYFLY_APP_NAME": name,
+        **({"MAYFLY_APP_CHECKS": checks_json} if checks_json else {}),
+        **app.env,
+    }
     limits = {"memory": app.resources.memory_limit}
     if app.resources.cpu_limit:
         limits["cpu"] = app.resources.cpu_limit

@@ -33,7 +33,9 @@ echo "==> building + importing mayfly images (dragonfly, hello, ministack) at ${
 docker build -q -t ghcr.io/jasondcamp/mayfly-dragonfly:${V} dragonfly/
 docker build -q -t ghcr.io/jasondcamp/mayfly-hello:${V} hello/
 docker build -q -t ghcr.io/jasondcamp/mayfly-ministack:${V} emulator/
-k3d image import ghcr.io/jasondcamp/mayfly-dragonfly:${V} ghcr.io/jasondcamp/mayfly-hello:${V} ghcr.io/jasondcamp/mayfly-ministack:${V} -c "$CLUSTER"
+docker build -q -t ghcr.io/jasondcamp/mayfly-caddis:${V} caddis/
+docker build -q -t ghcr.io/jasondcamp/mayfly-caddis-frontend:${V} caddis-frontend/
+k3d image import ghcr.io/jasondcamp/mayfly-dragonfly:${V} ghcr.io/jasondcamp/mayfly-hello:${V} ghcr.io/jasondcamp/mayfly-ministack:${V} ghcr.io/jasondcamp/mayfly-caddis:${V} ghcr.io/jasondcamp/mayfly-caddis-frontend:${V} -c "$CLUSTER"
 
 echo "==> mayfly up"
 uv run mayfly up "$SPEC" --kubeconfig "$KC"
