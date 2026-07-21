@@ -8,10 +8,13 @@ on:
 jobs:
   unit:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.13"]  # oldest supported + newest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv venv && uv pip install -e '.[dev]'
+      - run: uv sync --python ${{ matrix.python }}
       - run: uv run ruff check src tests
       - run: uv run pytest -q
 
@@ -23,5 +26,5 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       - name: install k3d
         run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-      - run: uv venv && uv pip install -e '.[dev]'
+      - run: uv sync
       - run: chmod +x scripts/e2e.sh examples/smoke-test.sh && ./scripts/e2e.sh mayfly-ci

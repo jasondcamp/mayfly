@@ -1,0 +1,38 @@
+# Every ElastiCache engine side by side: redis, valkey, and memcached,
+# each provisioned through the real ElastiCache API (create-cache-cluster
+# spawns the container; describe-cache-clusters returns a live endpoint).
+# The engine version selects the container image tag. valkey needs
+# mayfly's patched emulator image, pinned below.
+#
+#   mayfly up examples/env-caches.yaml
+#   open http://dragonfly.<namespace>.localtest.me/   # one tile per cache
+#
+# Apps consume the per-cache secrets: REDIS_URL/REDIS_HOST/REDIS_PORT for
+# redis and valkey (wire-compatible), MEMCACHED_HOST/MEMCACHED_PORT for
+# memcached.
+apiVersion: mayfly/v1alpha1
+seed: caches-1
+ttl: 4h
+
+emulator:
+  image: ghcr.io/jasondcamp/mayfly-ministack
+  version: "0.1.3"
+
+services:
+  elasticache:
+    - name: sessions
+      engine: redis
+      version: "7.2"
+    - name: feed
+      engine: valkey
+      version: "8.0"
+    - name: fragments
+      engine: memcached
+      version: "1.6"
+
+apps:
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, timeoutSeconds: 30}
+    ingress: {}

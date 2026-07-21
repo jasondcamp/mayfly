@@ -6,24 +6,62 @@ import re
 import subprocess
 import time
 from collections.abc import Iterator
+from typing import Optional
 
 from kubernetes import client, config, dynamic
 from kubernetes.client import ApiException
+from kubernetes.config import ConfigException
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
+
+try:  # urllib3 >= 2
+    from urllib3.exceptions import NameResolutionError
+except ImportError:  # urllib3 1.x: DNS failures surface as NewConnectionError
+    class NameResolutionError(Exception):
+        pass
 
 from . import FIELD_MANAGER
 
 
+class ClusterUnreachable(RuntimeError):
+    """The Kubernetes API server can't be reached; message is user-facing."""
+
+
+def _unreachable(e: MaxRetryError, context: Optional[str]) -> ClusterUnreachable:
+    host = f"{e.pool.host}:{e.pool.port}"
+    dns_failure = isinstance(e.reason, NameResolutionError) or (
+        "resolve" in str(e.reason).lower() or "name or service not known" in str(e.reason).lower()
+    )
+    if dns_failure:
+        what = f"cannot resolve cluster host {e.pool.host!r}"
+    elif isinstance(e.reason, ConnectTimeoutError):
+        what = f"connection to {host} timed out"
+    else:
+        what = f"cannot connect to {host}"
+    ctx = f"context {context!r}" if context else "the current kubeconfig context"
+    return ClusterUnreachable(
+        f"{what} ({ctx}). Is the cluster up? Use --context/--kubeconfig to target another."
+    )
+
+
 class K8s:
-    def __init__(self, context: str | None = None, kubeconfig: str | None = None):
-        config.load_kube_config(config_file=kubeconfig, context=context)
+    def __init__(self, context: Optional[str] = None, kubeconfig: Optional[str] = None):
+        try:
+            config.load_kube_config(config_file=kubeconfig, context=context)
+        except ConfigException as e:
+            raise ClusterUnreachable(str(e)) from e
         self.context = context
         self.kubeconfig = kubeconfig
         self.core = client.CoreV1Api()
         self.apps = client.AppsV1Api()
-        self.dyn = dynamic.DynamicClient(client.ApiClient())
+        self.batch = client.BatchV1Api()
+        try:
+            # first API contact (/version + discovery) happens here
+            self.dyn = dynamic.DynamicClient(client.ApiClient())
+        except MaxRetryError as e:
+            raise _unreachable(e, context) from e
 
     # ------------------------------------------------------------ apply
-    def apply(self, manifest: dict, namespace: str | None = None) -> None:
+    def apply(self, manifest: dict, namespace: Optional[str] = None) -> None:
         """Server-side apply a single manifest dict."""
         resource = self.dyn.resources.get(
             api_version=manifest["apiVersion"], kind=manifest["kind"]
@@ -82,18 +120,50 @@ class K8s:
             raise TimeoutError(f"namespace {name} still terminating after {timeout}s")
 
     # ---------------------------------------------------------- secrets
-    def write_secret(self, namespace: str, name: str, data: dict[str, str]) -> None:
+    def write_secret(
+        self,
+        namespace: str,
+        name: str,
+        data: dict[str, str],
+        labels: Optional[dict] = None,
+    ) -> None:
+        metadata: dict = {"name": name}
+        if labels:
+            metadata["labels"] = labels
         self.apply(
             {
                 "apiVersion": "v1",
                 "kind": "Secret",
-                "metadata": {"name": name},
+                "metadata": metadata,
                 "stringData": data,
             },
             namespace=namespace,
         )
 
-    def read_secret(self, namespace: str, name: str) -> dict[str, str] | None:
+    def copy_secret(self, name: str, source_ns: str, target_ns: str) -> None:
+        """Copy a secret (e.g. registry credentials) into an env namespace."""
+        try:
+            s = self.core.read_namespaced_secret(name, source_ns)
+        except ApiException as e:
+            if e.status == 404:
+                raise RuntimeError(
+                    f"pull secret {name!r} not found in namespace {source_ns!r}; "
+                    f"create it there (kubectl create secret docker-registry ...) "
+                    f"or pass --pull-secret-namespace"
+                ) from e
+            raise
+        self.apply(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {"name": name},
+                "type": s.type,
+                "data": s.data or {},
+            },
+            namespace=target_ns,
+        )
+
+    def read_secret(self, namespace: str, name: str) -> Optional[dict]:
         import base64
 
         try:
@@ -106,17 +176,115 @@ class K8s:
 
     # ------------------------------------------------------ deployments
     def wait_deployment(self, namespace: str, name: str, timeout: int = 180) -> None:
+        """Wait for rollout completion (kubectl rollout status semantics).
+
+        Checking available_replicas alone is not enough: during a rolling
+        update the OLD pod still counts as available, and provisioning
+        against it is work an in-memory emulator forgets seconds later.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 d = self.apps.read_namespaced_deployment(name, namespace)
-                if (d.status.available_replicas or 0) >= (d.spec.replicas or 1):
+                want = d.spec.replicas or 1
+                s = d.status
+                if (
+                    (s.observed_generation or 0) >= d.metadata.generation
+                    and (s.updated_replicas or 0) >= want
+                    and (s.available_replicas or 0) >= want
+                    and not s.unavailable_replicas
+                ):
                     return
             except ApiException as e:
                 if e.status != 404:
                     raise
             time.sleep(2)
-        raise TimeoutError(f"deployment {namespace}/{name} not available after {timeout}s")
+        raise TimeoutError(f"deployment {namespace}/{name} rollout not complete after {timeout}s")
+
+    # ------------------------------------------------------------- jobs
+    def get_job(self, namespace: str, name: str):
+        try:
+            return self.batch.read_namespaced_job(name, namespace)
+        except ApiException as e:
+            if e.status == 404:
+                return None
+            raise
+
+    def delete_job(self, namespace: str, name: str, timeout: int = 120) -> None:
+        """Delete a Job and its pods, waiting until gone (Jobs are immutable,
+        so re-running an init app means recreate)."""
+        try:
+            self.batch.delete_namespaced_job(
+                name, namespace, propagation_policy="Foreground"
+            )
+        except ApiException as e:
+            if e.status == 404:
+                return
+            raise
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                self.batch.read_namespaced_job(name, namespace)
+            except ApiException as e:
+                if e.status == 404:
+                    return
+                raise
+            time.sleep(1)
+        raise TimeoutError(f"job {namespace}/{name} still deleting after {timeout}s")
+
+    def wait_job(self, namespace: str, name: str, timeout: int) -> None:
+        """Wait for Job completion; raise RuntimeError with reason on failure."""
+        deadline = time.monotonic() + timeout + 30  # deadline enforcement margin
+        while time.monotonic() < deadline:
+            j = self.batch.read_namespaced_job(name, namespace)
+            s = j.status
+            if (s.succeeded or 0) >= 1:
+                return
+            for cond in s.conditions or []:
+                if cond.type == "Failed" and cond.status == "True":
+                    raise RuntimeError(
+                        f"init job {name} failed: {cond.reason or ''} {cond.message or ''}".strip()
+                    )
+            time.sleep(2)
+        raise RuntimeError(f"init job {name} did not complete within {timeout}s")
+
+    def job_logs(self, namespace: str, name: str, tail: int = 40) -> str:
+        pods = self.core.list_namespaced_pod(
+            namespace, label_selector=f"job-name={name}"
+        ).items
+        chunks = []
+        for p in pods[-2:]:
+            try:
+                resp = self.core.read_namespaced_pod_log(
+                    p.metadata.name, namespace, tail_lines=tail,
+                    _preload_content=False,
+                )
+                chunks.append(resp.data.decode(errors="replace"))
+            except ApiException:
+                pass
+        return "\n".join(chunks).strip()
+
+    def restart_deployment(self, namespace: str, name: str) -> None:
+        """Trigger a rolling restart (same mechanism as kubectl rollout restart)."""
+        from datetime import datetime, timezone
+
+        self.apps.patch_namespaced_deployment(
+            name,
+            namespace,
+            {
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "mayfly.dev/restarted-at": datetime.now(
+                                    timezone.utc
+                                ).isoformat(timespec="seconds")
+                            }
+                        }
+                    }
+                }
+            },
+        )
 
     def exec_in_deployment(
         self, namespace: str, deployment: str, command: list[str], retries: int = 5
@@ -133,7 +301,7 @@ class K8s:
         ]
         if not ready:
             raise RuntimeError(f"no ready pod for {namespace}/{deployment}")
-        last_err: Exception | None = None
+        last_err: Optional[Exception] = None
         for _ in range(retries):
             try:
                 return stream(

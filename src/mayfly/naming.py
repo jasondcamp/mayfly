@@ -1,10 +1,12 @@
-"""Deterministic environment naming: adjective-adjective-animal-hash.
+"""Deterministic environment naming: adjective-adjective-animal.
 
-The seed string hashes to a memorable name. A 4-hex-char suffix removes
-the collision risk of the word combination alone (~64k combos).
+The seed string hashes to a memorable name. Distinct seeds can collide onto
+the same words (~64k combinations); `mayfly up` guards against this by
+refusing a namespace whose recorded seed label differs from the spec's.
 """
 
 import hashlib
+from typing import Optional
 
 ADJECTIVES = [
     "obvious", "frustrated", "wobbly", "gentle", "rapid", "blonde", "sleepy", "brave",
@@ -22,18 +24,16 @@ ANIMALS = [
     "narwhal", "ocelot", "puffin", "robin", "skink", "toad", "urchin", "walrus",
 ]
 
-NAMESPACE_PREFIX = "env-"
-
-
 def env_name(seed: str) -> str:
     """Derive the deterministic environment name from a seed string."""
     digest = hashlib.sha256(seed.encode()).hexdigest()
     a1 = int(digest[0:2], 16) % len(ADJECTIVES)
     a2 = int(digest[2:4], 16) % len(ADJECTIVES)
     an = int(digest[4:6], 16) % len(ANIMALS)
-    suffix = digest[6:10]
-    return f"{ADJECTIVES[a1]}-{ADJECTIVES[a2]}-{ANIMALS[an]}-{suffix}"
+    return f"{ADJECTIVES[a1]}-{ADJECTIVES[a2]}-{ANIMALS[an]}"
 
 
-def namespace_for(seed: str) -> str:
-    return f"{NAMESPACE_PREFIX}{env_name(seed)}"
+def namespace_for(seed: str, prefix: Optional[str] = None) -> str:
+    """Namespace for a seed: `<prefix>-<name>` with a prefix, bare name without."""
+    name = env_name(seed)
+    return f"{prefix}-{name}" if prefix else name

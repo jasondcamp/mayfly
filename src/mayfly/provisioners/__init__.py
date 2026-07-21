@@ -23,7 +23,15 @@ from dataclasses import dataclass
 from ..emulators import api_backed_services
 from ..k8s import K8s
 from ..spec import Backend, EnvSpec
-from .aws import ElastiCacheProvisioner, MskProvisioner, RdsProvisioner, S3Provisioner
+from .aws import (
+    AlbProvisioner,
+    SecretsManagerProvisioner,
+    DynamoProvisioner,
+    ElastiCacheProvisioner,
+    MskHybridProvisioner,
+    RdsProvisioner,
+    S3Provisioner,
+)
 from .native import (
     ElastiCacheNativeProvisioner,
     MskNativeProvisioner,
@@ -42,7 +50,11 @@ class ProvisionContext:
 _EMULATOR = {
     "rds": RdsProvisioner,
     "elasticache": ElastiCacheProvisioner,
-    "msk": MskProvisioner,
+    # hybrid: native broker + control-plane registration in the emulator
+    "msk": MskHybridProvisioner,
+    "dynamodb": DynamoProvisioner,  # in-process; no native backend exists
+    "alb": AlbProvisioner,  # needs the patched ministack image (data plane)
+    "secretsmanager": SecretsManagerProvisioner,  # in-process
 }
 _NATIVE = {
     "rds": RdsNativeProvisioner,
@@ -65,10 +77,18 @@ def provision_all(spec: EnvSpec, ctx: ProvisionContext) -> dict[str, dict[str, s
         ("rds", spec.services.rds),
         ("elasticache", spec.services.elasticache),
         ("msk", spec.services.msk),
+        ("dynamodb", spec.services.dynamodb),
+        ("alb", spec.services.alb),
+        ("secretsmanager", spec.services.secretsmanager),
     ):
         for backend in ("emulator", "native"):
             chosen = [i for i in items if resolve_backend(i.backend, svc_class, spec) == backend]
             if chosen:
                 registry = _EMULATOR if backend == "emulator" else _NATIVE
+                if svc_class not in registry:
+                    raise ValueError(
+                        f"{svc_class} has no {backend} backend "
+                        f"(remove 'backend: {backend}' from the spec)"
+                    )
                 secrets.update(registry[svc_class]().provision(chosen, ctx))
     return secrets

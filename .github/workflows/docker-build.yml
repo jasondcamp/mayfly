@@ -1,0 +1,174 @@
+name: Build and Push Docker Images
+
+# Push to `deploy` (or run manually) -> test, build linux/amd64 + linux/arm64
+# on native runners (no QEMU), push per-platform digests to GHCR, then merge
+# into one multi-arch manifest per image tagged: <branch>, <branch>-<sha>,
+# latest, and the version from pyproject.toml.
+#
+# Images: mayfly-dragonfly (dragonfly/), mayfly-hello (hello/),
+# mayfly-ministack (emulator/).
+
+on:
+  push:
+    branches:
+      - deploy
+  workflow_dispatch:
+
+env:
+  GHCR_REGISTRY: ghcr.io
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install
+        run: uv sync
+
+      - name: Lint
+        run: uv run ruff check src tests
+
+      - name: Run tests
+        run: uv run pytest -q
+
+  build-image:
+    needs: build-and-test
+    runs-on: ${{ matrix.platform == 'linux/amd64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend]
+        platform:
+          - linux/amd64
+          - linux/arm64
+        include:
+          - image: mayfly-dragonfly
+            context: dragonfly
+          - image: mayfly-hello
+            context: hello
+          - image: mayfly-ministack
+            context: emulator
+          - image: mayfly-caddis
+            context: caddis
+          - image: mayfly-caddis-frontend
+            context: caddis-frontend
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Prepare
+        run: |
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ github.ref_name }}-${{ env.PLATFORM_PAIR }}
+          cache-to: type=gha,scope=${{ matrix.image }}-${{ github.ref_name }}-${{ env.PLATFORM_PAIR }},mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-image:
+    needs: build-image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Read version
+        id: version
+        run: echo "version=$(sed -n 's/^version = \"\(.*\)\"/\1/p' pyproject.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          # anchored with the platform prefix: a bare "<image>-*" glob would
+          # also match sibling images that share the prefix (mayfly-caddis-*
+          # matches mayfly-caddis-frontend-*), merging foreign digests
+          pattern: digests-${{ matrix.image }}-linux-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest
+            type=raw,value=${{ steps.version.outputs.version }}
+
+      - name: Create manifest list and push to GHCR
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}@sha256:%s ' *)
+        env:
+          DOCKER_METADATA_OUTPUT_JSON: ${{ steps.meta.outputs.json }}
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:latest

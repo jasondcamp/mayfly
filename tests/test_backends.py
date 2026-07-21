@@ -10,8 +10,9 @@ def test_auto_on_ministack():
     spec = _spec("ministack")
     assert resolve_backend("auto", "rds", spec) == "emulator"
     assert resolve_backend("auto", "s3", spec) == "emulator"
-    assert resolve_backend("auto", "elasticache", spec) == "native"
-    assert resolve_backend("auto", "msk", spec) == "native"
+    assert resolve_backend("auto", "elasticache", spec) == "emulator"
+    # msk "emulator" backend is the hybrid: native broker + control-plane registration
+    assert resolve_backend("auto", "msk", spec) == "emulator"
 
 
 def test_auto_on_floci_is_native_for_containers():
@@ -30,3 +31,8 @@ def test_latest_version_rejected():
     import pytest
     with pytest.raises(ValueError):
         EnvSpec.model_validate({"seed": "x", "emulator": {"version": "latest"}})
+
+
+def test_dynamodb_emulator_only():
+    for kind in ("ministack", "floci"):
+        assert resolve_backend("auto", "dynamodb", _spec(kind)) == "emulator"

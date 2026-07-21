@@ -19,8 +19,9 @@ Topologies (validated 2026-07-18 on k3d + kubedock):
 """
 
 from dataclasses import dataclass
+from typing import Optional
 
-from .spec import EmulatorSpec
+from .spec import EmulatorSpec, EnvSpec
 
 AWS_SERVICE = "aws"
 AWS_PORT = 4566
@@ -28,7 +29,15 @@ AWS_ENDPOINT = f"http://{AWS_SERVICE}:{AWS_PORT}"
 
 RDS_BASE_PORT = 15432
 CACHE_BASE_PORT = 16379
+KAFKA_PORT = 9092
 PORT_RANGE = 8  # per service class, pre-exposed on the aws Service
+
+
+def msk_bootstrap(spec: EnvSpec) -> Optional[str]:
+    """Bootstrap-broker string for the natively-deployed MSK brokers."""
+    brokers = [f"msk-{m.name}:{KAFKA_PORT}" for m in spec.services.msk]
+    return ",".join(brokers) or None
+
 
 KUBEDOCK_IMAGE = (
     "joyrex2001/kubedock:0.22.0"
@@ -40,7 +49,7 @@ KUBEDOCK_IMAGE = (
 class EmulatorInfo:
     image: str
     version: str
-    digest: str | None
+    digest: Optional[str]
     # service classes provisioned through the emulator's AWS API; everything
     # else falls back to the native backend
     api_backed: frozenset[str]
@@ -51,13 +60,16 @@ EMULATORS: dict[str, EmulatorInfo] = {
         image="ministackorg/ministack",
         version="1.4.3",
         digest="sha256:22a278f078f5f88b3437abd1a4daea101bbb1b3d5d7e35353c39029a6ade09e0",
-        api_backed=frozenset({"s3", "rds"}),
+        # msk is hybrid: control plane in ministack (MINISTACK_MSK_BOOTSTRAP
+        # routes GetBootstrapBrokers to the broker mayfly deploys natively);
+        # the Kafka wire protocol itself is served by that broker.
+        api_backed=frozenset({"s3", "rds", "elasticache", "msk", "dynamodb", "alb", "secretsmanager"}),
     ),
     "floci": EmulatorInfo(
         image="floci/floci",
         version="1.5.33",
         digest="sha256:d2ecc8035822b23b8587a56eab15edd825f41d3fb80d93e8e66680410beddc08",
-        api_backed=frozenset({"s3"}),
+        api_backed=frozenset({"s3", "dynamodb", "secretsmanager"}),  # in-process in floci too
     ),
 }
 
@@ -127,6 +139,10 @@ def _kubedock_container() -> dict:
             "--namespace=$(POD_NAMESPACE)",
             "--service-account=kubedock",
             "--reverse-proxy",
+            # kubedock reaps spawned pods after 1h by default — far shorter
+            # than environment TTLs. Namespace deletion is mayfly's cleanup;
+            # effectively disable the reaper.
+            "--reapmax=8760h",
         ],
         "env": [
             {
@@ -136,8 +152,42 @@ def _kubedock_container() -> dict:
         ],
         "ports": [{"containerPort": 2475}],
         "resources": {
-            "requests": {"cpu": "25m", "memory": "32Mi"},
-            "limits": {"memory": "256Mi"},
+            "requests": {"cpu": "25m", "memory": "64Mi"},
+            # kubedock holds every reverse-proxy listener + container
+            # bookkeeping in memory; 256Mi got OOMKilled after ~1 day,
+            # which silently severs all aws:<port> data planes
+            "limits": {"memory": "768Mi"},
+        },
+    }
+
+
+def _aws_ingress(namespace: str) -> dict:
+    """Opt-in (emulator.expose) ingress for the AWS API: laptop CLI/SDK
+    access at aws.<namespace>.localtest.me with no port-forward."""
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": {"name": "aws"},
+        "spec": {
+            "rules": [
+                {
+                    "host": f"aws.{namespace}.localtest.me",
+                    "http": {
+                        "paths": [
+                            {
+                                "path": "/",
+                                "pathType": "Prefix",
+                                "backend": {
+                                    "service": {
+                                        "name": AWS_SERVICE,
+                                        "port": {"number": AWS_PORT},
+                                    }
+                                },
+                            }
+                        ]
+                    },
+                }
+            ]
         },
     }
 
@@ -164,7 +214,7 @@ def _aws_service(extra_ports: bool) -> dict:
     }
 
 
-def _deployment(containers: list[dict], service_account: str | None = None) -> dict:
+def _deployment(containers: list[dict], service_account: Optional[str] = None) -> dict:
     pod_spec: dict = {"enableServiceLinks": False, "containers": containers}
     if service_account:
         pod_spec["serviceAccountName"] = service_account
@@ -192,34 +242,45 @@ def _readiness() -> dict:
     }
 
 
-def emulator_manifests(em: EmulatorSpec, namespace: str) -> list[dict]:
+def emulator_manifests(
+    em: EmulatorSpec, namespace: str, msk_bootstrap: Optional[str] = None
+) -> list[dict]:
     image = resolve_image(em)
     if em.kind == "ministack":
+        # DOCKER_NETWORK is deliberately NOT set: RDS public-endpoint mode
+        # ignores it, and setting it forces ElastiCache down the
+        # network-attach path that kubedock rejects. Without it, both
+        # services take the published-port branch and advertise
+        # MINISTACK_HOST:<base_port+n> — reachable via the aws Service.
+        env = {
+            "DOCKER_HOST": "tcp://localhost:2475",
+            "MINISTACK_HOST": AWS_SERVICE,
+            "MINISTACK_RDS_PUBLIC_ENDPOINT": "1",
+            "RDS_BASE_PORT": str(RDS_BASE_PORT),
+            "ELASTICACHE_BASE_PORT": str(CACHE_BASE_PORT),
+        }
+        if msk_bootstrap:
+            # GetBootstrapBrokers answers with the broker mayfly brings
+            env["MINISTACK_MSK_BOOTSTRAP"] = msk_bootstrap
         ministack = {
             "name": "ministack",
             "image": image,
             "ports": [{"containerPort": AWS_PORT}],
-            "env": _env(
-                {
-                    "DOCKER_HOST": "tcp://localhost:2475",
-                    "DOCKER_NETWORK": "kubedock",
-                    "MINISTACK_HOST": AWS_SERVICE,
-                    "MINISTACK_RDS_PUBLIC_ENDPOINT": "1",
-                    "RDS_BASE_PORT": str(RDS_BASE_PORT),
-                    "ELASTICACHE_BASE_PORT": str(CACHE_BASE_PORT),
-                }
-            ),
+            "env": _env(env),
             "readinessProbe": _readiness(),
             "resources": {
                 "requests": {"cpu": "50m", "memory": "64Mi"},
                 "limits": {"memory": "512Mi"},
             },
         }
-        return [
+        manifests = [
             *_kubedock_rbac(namespace),
             _deployment([_kubedock_container(), ministack], service_account="kubedock"),
             _aws_service(extra_ports=True),
         ]
+        if em.expose:
+            manifests.append(_aws_ingress(namespace))
+        return manifests
 
     floci = {
         "name": "floci",
@@ -232,4 +293,7 @@ def emulator_manifests(em: EmulatorSpec, namespace: str) -> list[dict]:
             "limits": {"memory": "512Mi"},
         },
     }
-    return [_deployment([floci]), _aws_service(extra_ports=False)]
+    manifests = [_deployment([floci]), _aws_service(extra_ports=False)]
+    if em.expose:
+        manifests.append(_aws_ingress(namespace))
+    return manifests
