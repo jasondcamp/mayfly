@@ -3,6 +3,7 @@
 import json
 import logging
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -82,11 +83,34 @@ SET_OPT = typer.Option(
 
 
 def _say(msg: str) -> None:
-    typer.echo(f"==> {msg}")
+    typer.echo(typer.style("==> ", fg="green", bold=True) + msg)
 
 
 def _detail(msg: str) -> None:
-    typer.echo(f"    {msg}")
+    typer.secho(f"    {msg}", dim=True)
+
+
+def _ok(label: str, started: Optional[float] = None) -> None:
+    """A completed step, website-terminal style: green check, dim timing."""
+    elapsed = "" if started is None else f"{time.monotonic() - started:.1f}s"
+    typer.echo(
+        "  "
+        + typer.style("\u2713", fg="green", bold=True)
+        + f" {label:<50}"
+        + typer.style(f"{elapsed:>7}", dim=True)
+    )
+
+
+def _rule() -> None:
+    typer.secho("  " + "\u254c" * 59, dim=True)
+
+
+def _banner() -> None:
+    typer.secho(f"mayfly {__version__} \u00b7 ephemeral by design", dim=True)
+
+
+def _kv(label: str, value: str) -> None:
+    typer.echo("  " + typer.style(f"{label:<10}", dim=True) + value)
 
 
 def _load(
@@ -181,12 +205,15 @@ def up(
         raise typer.Exit(1)
     name = env_name(spec.seed)
     ns = namespace_for(spec.seed, spec.namespace_prefix)
+    _banner()
     _say(f"environment {name} (namespace {ns}, seed {spec.seed!r}, ttl {spec.ttl})")
+    t_up = time.monotonic()
 
     k8s = K8s(context, kubeconfig)
     _guard_seed_collision(k8s, ns, spec.seed)
     now = datetime.now(timezone.utc)
     expires = now + spec.ttl_delta
+    t0 = time.monotonic()
     k8s.ensure_namespace(
         ns,
         labels={
@@ -200,10 +227,15 @@ def up(
         },
     )
 
+    _ok(f"namespace {ns}", t0)
+
+    t0 = time.monotonic()
     _say(f"deploying emulator {spec.emulator.kind} ({resolve_image(spec.emulator)})")
     k8s.apply_all(emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)), ns)
     k8s.wait_deployment(ns, AWS_SERVICE)
+    _ok("emulator ready", t0)
 
+    t0 = time.monotonic()
     _say("provisioning services")
     with k8s.port_forward(ns, AWS_SERVICE, AWS_PORT) as local_port:
         ctx = ProvisionContext(
@@ -217,6 +249,7 @@ def up(
     for secret_name, data in secrets.items():
         k8s.write_secret(ns, secret_name, data, labels={SERVICE_LABEL: "true"})
         _detail(f"secret {secret_name} written")
+    _ok(f"{len(secrets)} service secret(s) written", t0)
 
     enabled_inits = {n: a for n, a in spec.init_apps.items() if a.enabled}
     enabled_apps = {n: a for n, a in spec.apps.items() if a.enabled}
@@ -244,11 +277,12 @@ def up(
                     _detail(f"init {init_name}: skipped (on-change; config unchanged)")
                     continue
         _say(f"init: {init_name}")
+        t0 = time.monotonic()
         k8s.delete_job(ns, job_name)
         k8s.apply(init_app_manifest(init_name, init_spec), namespace=ns)
         try:
             k8s.wait_job(ns, job_name, init_spec.timeout_seconds)
-            _detail(f"{init_name} completed")
+            _ok(f"init {init_name} completed", t0)
         except RuntimeError as e:
             typer.echo(f"error: {e}", err=True)
             logs = k8s.job_logs(ns, job_name)
@@ -263,27 +297,35 @@ def up(
         for app_name, app_spec in enabled_apps.items():
             k8s.apply_all(app_manifests(app_name, app_spec, ns, checks_json), ns)
         for app_name in enabled_apps:
+            t0 = time.monotonic()
             k8s.wait_deployment(ns, app_name)
+            _ok(f"{app_name} ready", t0)
 
-    _say(f"environment {name} is up (expires {expires.isoformat(timespec='minutes')})")
+    _rule()
+    typer.secho(
+        f"Environment ready in {time.monotonic() - t_up:.1f}s"
+        f" \u00b7 ttl {spec.ttl}"
+        f" \u00b7 expires {expires.isoformat(timespec='minutes')}",
+        fg="green",
+        bold=True,
+    )
     typer.echo()
-    typer.echo(f"  Namespace: {ns}")
+    _kv("Namespace", ns)
     for app_name, app_spec in enabled_apps.items():
         if app_spec.ingress:
             host = app_ingress_host(app_name, app_spec, ns)
-            typer.echo(f"  {app_name.capitalize() + ':':<10} http://{host}/  (cluster ingress, port 80)")
+            _kv(app_name.capitalize(), f"http://{host}/  (cluster ingress, port 80)")
     for alb in spec.services.alb:
-        typer.echo(
-            f"  {'ALB ' + alb.name + ':':<10} http://{alb.name}.{ns}.localtest.me/  "
-            f"(load-balanced -> {alb.target_app})"
+        _kv(
+            "ALB " + alb.name,
+            f"http://{alb.name}.{ns}.localtest.me/  (load-balanced -> {alb.target_app})",
         )
-    typer.echo(f"  Secrets:   kubectl -n {ns} get secrets")
+    _kv("Secrets", f"kubectl -n {ns} get secrets")
     if spec.emulator.expose:
-        typer.echo(f"  AWS API:   http://aws.{ns}.localtest.me  "
-                   f"(AWS_ENDPOINT_URL; creds test/test)")
+        _kv("AWS API", f"http://aws.{ns}.localtest.me  (AWS_ENDPOINT_URL; creds test/test)")
     else:
-        typer.echo(f"  AWS API:   kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
-    typer.echo(f"  Teardown:  mayfly down {spec_file}")
+        _kv("AWS API", f"kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
+    _kv("Teardown", f"mayfly down {spec_file}")
 
 
 @app.command()
@@ -304,8 +346,10 @@ def down(
     k8s = K8s(context, kubeconfig)
     _managed_namespace(k8s, ns)
     _say(f"deleting {ns}")
+    t0 = time.monotonic()
     k8s.delete_namespace(ns)
-    _say("destroyed")
+    _ok(f"namespace {ns} deleted", t0)
+    typer.secho("destroyed \u00b7 gone by sunset", fg="green", bold=True)
 
 
 @app.command("list")
@@ -415,13 +459,14 @@ def restart(
             raise typer.Exit(1)
         targets = {n: a for n, a in targets.items() if n in apps_filter}
 
+    _say(f"restarting: {', '.join(targets)}")
     for name in targets:
-        _say(f"restarting {name}")
         k8s.restart_deployment(ns, name)
     for name in targets:
+        t0 = time.monotonic()
         k8s.wait_deployment(ns, name, timeout=300)
-        _detail(f"{name} rolled")
-    _say(f"{len(targets)} app(s) restarted")
+        _ok(f"{name} rolled", t0)
+    typer.secho(f"{len(targets)} app(s) restarted", fg="green", bold=True)
 
 
 @app.command()

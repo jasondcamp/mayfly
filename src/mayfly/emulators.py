@@ -140,9 +140,14 @@ def _kubedock_container() -> dict:
             "--service-account=kubedock",
             "--reverse-proxy",
             # kubedock reaps spawned pods after 1h by default — far shorter
-            # than environment TTLs. Namespace deletion is mayfly's cleanup;
-            # effectively disable the reaper.
-            "--reapmax=8760h",
+            # than environment TTLs — and released versions have no way to
+            # disable the reaper (upstream: joyrex2001/kubedock#290 makes
+            # reapmax=0 = disabled;
+            # DO NOT pass 0 to current releases, they'd reap immediately).
+            # Namespace deletion is mayfly's cleanup, so push the ceiling out
+            # a century; switch to --reapmax=0 once the pinned kubedock has
+            # the patch.
+            "--reapmax=876000h",
         ],
         "env": [
             {

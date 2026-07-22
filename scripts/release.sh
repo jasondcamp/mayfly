@@ -7,8 +7,9 @@
 # Pass minor|major to bump differently, or --no-bump to rebuild as-is.
 # Then: lint + tests -> build sdist/wheel into dist/ -> install the wheel
 # into a scratch venv and prove the `mayfly` command works.
-# With --publish: additionally upload dist/* to PyPI via `uv publish`
-# (auth: set UV_PUBLISH_TOKEN to a PyPI API token, or use trusted publishing).
+# After a successful build you're asked whether to upload to PyPI via
+# `uv publish` (auth: set UV_PUBLISH_TOKEN to a PyPI API token, or use
+# trusted publishing). --publish skips the prompt (CI/non-interactive).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -83,12 +84,25 @@ fi
 "$SCRATCH/venv/bin/mayfly" --help >/dev/null
 echo "    wheel installs; 'mayfly version' -> $INSTALLED_V"
 
+echo "==> build complete: dist/"
+ls -1 dist
+
+if [ "$PUBLISH" != "1" ]; then
+  if [ -t 0 ]; then
+    printf "Publish mayfly-cli %s to PyPI? [y/N] " "$PYPROJECT_V"
+    read -r REPLY
+    case "$REPLY" in
+      [Yy]|[Yy][Ee][Ss]) PUBLISH=1 ;;
+    esac
+  else
+    echo "non-interactive shell: not publishing (pass --publish to upload)"
+  fi
+fi
+
 if [ "$PUBLISH" = "1" ]; then
   echo "==> publishing to PyPI"
   uv publish
   echo "==> published mayfly-cli $PYPROJECT_V  (pip install mayfly-cli)"
 else
-  echo "==> build complete: dist/"
-  ls -1 dist
-  echo "run again with --publish to upload (requires UV_PUBLISH_TOKEN)"
+  echo "==> not published (rerun and answer y, or pass --publish)"
 fi
