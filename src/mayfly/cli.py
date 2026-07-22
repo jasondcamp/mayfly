@@ -30,6 +30,13 @@ from .emulators import (
     msk_bootstrap,
     resolve_image,
 )
+from .installer import (
+    DEFAULT_SCHEDULE,
+    REAPER_NAME,
+    SYSTEM_NAMESPACE,
+    default_cli_image,
+    reaper_manifests,
+)
 from .k8s import ClusterUnreachable, K8s, summarize_pods
 from .manifests import (
     app_checks,
@@ -133,13 +140,24 @@ def _seed_label(seed: str) -> str:
 
 
 def _guard_seed_collision(k8s: K8s, ns: str, seed: str) -> None:
-    """Without a hash suffix, two seeds can map to the same words; refuse to
-    adopt a namespace that records a different seed."""
+    """Refuse to adopt a namespace mayfly didn't create: without a hash
+    suffix two seeds can map to the same words, and on shared clusters the
+    name can collide with somebody else's namespace outright. Claiming a
+    foreign namespace would make it deletable by down/reap."""
     obj = k8s.get_namespace(ns)
     if obj is None:
         return
-    recorded = (obj.metadata.labels or {}).get(SEED_LABEL)
-    if recorded and recorded != _seed_label(seed):
+    labels = obj.metadata.labels or {}
+    if labels.get(MANAGED_LABEL) != "true":
+        typer.echo(
+            f"error: namespace {ns} already exists but was not created by "
+            f"mayfly — refusing to adopt it; pick a different seed or "
+            f"namespacePrefix",
+            err=True,
+        )
+        raise typer.Exit(1)
+    recorded = labels.get(SEED_LABEL)
+    if recorded != _seed_label(seed):
         typer.echo(
             f"error: namespace {ns} already belongs to seed {recorded!r} "
             f"(yours: {seed!r}) — name collision; pick a different seed",
@@ -467,6 +485,49 @@ def restart(
         k8s.wait_deployment(ns, name, timeout=300)
         _ok(f"{name} rolled", t0)
     typer.secho(f"{len(targets)} app(s) restarted", fg="green", bold=True)
+
+
+@app.command()
+def install(
+    schedule: str = typer.Option(
+        DEFAULT_SCHEDULE, "--schedule", help="reaper cron schedule"
+    ),
+    image: Optional[str] = typer.Option(
+        None,
+        "--image",
+        help="mayfly-cli image for the reaper (default: the published image "
+        "matching this CLI's version)",
+    ),
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
+):
+    """Install the in-cluster reaper: a CronJob in the mayfly-system
+    namespace that runs `mayfly reap` on a schedule, so expired
+    environments are deleted even when nobody runs the CLI."""
+    k8s = K8s(context, kubeconfig)
+    img = image or default_cli_image()
+    _say(f"installing reaper into {SYSTEM_NAMESPACE} (schedule {schedule!r})")
+    for m in reaper_manifests(img, schedule):
+        k8s.apply(m, namespace=SYSTEM_NAMESPACE)
+        _detail(f"{m['kind'].lower()} {m['metadata']['name']} applied")
+    _ok(f"reaper installed ({img})")
+    _detail(f"watch it: kubectl -n {SYSTEM_NAMESPACE} get jobs,pods")
+    _detail("remove it: mayfly uninstall")
+
+
+@app.command()
+def uninstall(
+    context: Optional[str] = CTX_OPT,
+    kubeconfig: Optional[str] = KCFG_OPT,
+):
+    """Remove the in-cluster reaper (namespace mayfly-system and its RBAC).
+    Environments are untouched."""
+    k8s = K8s(context, kubeconfig)
+    _say(f"removing {SYSTEM_NAMESPACE} and cluster RBAC")
+    k8s.delete_namespace(SYSTEM_NAMESPACE, wait=False)
+    for kind in ("ClusterRoleBinding", "ClusterRole"):
+        k8s.delete_cluster_object("rbac.authorization.k8s.io/v1", kind, REAPER_NAME)
+    _ok("reaper uninstalled (environments untouched)")
 
 
 @app.command()

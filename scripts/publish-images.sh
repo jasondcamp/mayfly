@@ -2,7 +2,8 @@
 # publish-images.sh [version]
 # Build and push mayfly's container images to ghcr.io/jasondcamp as
 # multi-arch (amd64 + arm64): mayfly-dragonfly, mayfly-hello,
-# mayfly-ministack. Tags: <version> and latest.
+# mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend, mayfly-cli.
+# Tags: <version> and latest.
 #
 # Auth: docker must be logged in to ghcr.io with a token that has
 # write:packages, e.g.:  gh auth token | docker login ghcr.io -u jasondcamp --password-stdin
@@ -16,7 +17,7 @@ command -v docker >/dev/null || { echo "missing dependency: docker" >&2; exit 1;
 docker buildx inspect mayfly-builder >/dev/null 2>&1 \
   || docker buildx create --name mayfly-builder --driver docker-container >/dev/null
 
-for pair in dragonfly:dragonfly hello:hello ministack:emulator caddis:caddis caddis-frontend:caddis-frontend; do
+for pair in dragonfly:dragonfly hello:hello ministack:emulator caddis:caddis caddis-frontend:caddis-frontend cli:.; do
   name="mayfly-${pair%%:*}"; dir="${pair##*:}"
   echo "==> ${REGISTRY}/${name}:${VERSION} (+ latest) from ${dir}/"
   docker buildx build --builder mayfly-builder \

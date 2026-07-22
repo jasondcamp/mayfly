@@ -63,11 +63,34 @@ mayfly extend env.yaml --ttl 4h    # push expiry out
 mayfly restart env.yaml [--app x]  # rolling-restart apps (services untouched)
 mayfly down env.yaml               # teardown (namespace delete)
 mayfly reap [--dry-run]            # delete every expired environment
+mayfly install                     # in-cluster reaper CronJob (see below)
+mayfly uninstall                   # remove it (environments untouched)
 ```
 
 All cluster-touching commands take `--context` / `--kubeconfig`. `down` and
 `reap` refuse namespaces not labeled `mayfly.dev/managed=true`, so mayfly
 can never delete something it didn't create.
+
+## Unattended cleanup: the in-cluster reaper
+
+`mayfly reap` from a laptop works, but nobody runs it at 3am. `mayfly
+install` puts a CronJob in a `mayfly-system` namespace that runs `mayfly
+reap` on a schedule (default every 10 minutes, `--schedule` to change), so
+expired environments are deleted with nobody watching:
+
+```bash
+mayfly install                       # uses ghcr.io/jasondcamp/mayfly-cli:<version>
+kubectl -n mayfly-system get jobs    # recent runs; pod logs show what was reaped
+mayfly uninstall                     # removes the CronJob + RBAC; envs untouched
+```
+
+There is no registry or database behind this: the reaper lists namespaces
+labeled `mayfly.dev/managed=true` and deletes the ones past their
+`mayfly.dev/expires-at` — the same live cluster state every other command
+reads. RBAC can't scope namespace deletion by label, so the ClusterRole
+grants namespace get/list/delete and the label guard is enforced in code
+(nothing unlabeled is ever touched). If the reaper is down, environments
+simply linger until the next `reap` — it fails safe.
 
 ## Use the AWS CLI against your environment
 

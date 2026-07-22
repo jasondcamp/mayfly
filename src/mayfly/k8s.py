@@ -48,7 +48,15 @@ class K8s:
         try:
             config.load_kube_config(config_file=kubeconfig, context=context)
         except ConfigException as e:
-            raise ClusterUnreachable(str(e)) from e
+            # No kubeconfig found: inside a pod (e.g. the reaper CronJob),
+            # fall back to the ServiceAccount. Explicit --kubeconfig or
+            # --context means the user wanted that config — fail loudly.
+            if kubeconfig or context:
+                raise ClusterUnreachable(str(e)) from e
+            try:
+                config.load_incluster_config()
+            except ConfigException:
+                raise ClusterUnreachable(str(e)) from e
         self.context = context
         self.kubeconfig = kubeconfig
         self.core = client.CoreV1Api()
@@ -118,6 +126,17 @@ class K8s:
                     return
                 time.sleep(2)
             raise TimeoutError(f"namespace {name} still terminating after {timeout}s")
+
+    def delete_cluster_object(self, api_version: str, kind: str, name: str) -> bool:
+        """Delete a cluster-scoped object (ClusterRole, ...); False if absent."""
+        resource = self.dyn.resources.get(api_version=api_version, kind=kind)
+        try:
+            resource.delete(name=name)
+            return True
+        except ApiException as e:
+            if e.status == 404:
+                return False
+            raise
 
     # ---------------------------------------------------------- secrets
     def write_secret(

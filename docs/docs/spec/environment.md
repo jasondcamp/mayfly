@@ -30,8 +30,16 @@ The seed hashes to a deterministic `adjective-adjective-animal` name
 - `up` refuses a namespace whose recorded seed label differs — a rare
   word-collision between two seeds becomes a loud error, never
   cross-contamination.
+- `up` also refuses a pre-existing namespace that mayfly didn't create
+  (no `mayfly.dev/managed` label). mayfly only ever operates on its own
+  labeled namespaces, so it coexists with anything else running in the
+  cluster — adopting a foreign namespace would make it deletable by
+  `down`/`reap`.
 
 ## TTL and the reaper
+
+For unattended cleanup, install the in-cluster reaper CronJob —
+see [getting started](../getting-started#unattended-cleanup-the-in-cluster-reaper).
 
 Every environment carries a `mayfly.dev/expires-at` annotation
 (`created + ttl`). `mayfly reap` deletes expired environments (namespaces

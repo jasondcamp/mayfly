@@ -1,0 +1,6 @@
+# The root Dockerfile (mayfly-cli) needs only the package sources; keep
+# the build context tiny (docs/node_modules alone is tens of MB).
+*
+!pyproject.toml
+!README.md
+!src

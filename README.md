@@ -17,7 +17,8 @@ it. No Docker socket, no privileged pods, no real AWS.
   `namespacePrefix: env`); namespace deletion is complete teardown. Two
   specs with different seeds coexist; re-running `up` on the same spec is
   idempotent, and `up` refuses a namespace whose recorded seed differs
-  (name collisions error instead of cross-contaminating).
+  or that mayfly didn't create (name collisions error instead of
+  cross-contaminating or adopting someone else's namespace).
 - A **swappable AWS emulator** (`emulator.kind`: `ministack` default, or
   `floci`) runs inside the namespace behind a single Service — apps and
   provisioners always use `http://aws:4566`. Emulator images are
@@ -64,6 +65,7 @@ mayfly render env.yaml             # print resolved plan, touch nothing
 mayfly extend env.yaml --ttl 4h    # push expiry out
 mayfly down env.yaml               # teardown (namespace delete)
 mayfly reap [--dry-run]            # delete every expired environment
+mayfly install                     # in-cluster reaper CronJob (mayfly-system)
 ```
 
 All cluster-touching commands take `--context` / `--kubeconfig`. `down` and
