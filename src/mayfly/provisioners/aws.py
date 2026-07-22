@@ -181,7 +181,7 @@ class AlbProvisioner:
 
     @staticmethod
     def _expose(ctx, name: str):
-        """Route <name>.<namespace>.localtest.me through the cluster ingress
+        """Route <name>.<namespace>.<ingressDomain> through the cluster ingress
         to the emulated ALB, rewriting Host to what its matcher expects.
 
         Traefik-specific (the Host rewrite needs a Middleware); silently
@@ -209,7 +209,7 @@ class AlbProvisioner:
             ctx.progress(f"alb: {name} not exposed (no Traefik middleware CRD)")
             return None
 
-        host = f"{name}.{ctx.namespace}.localtest.me"
+        host = f"{name}.{ctx.namespace}.{ctx.ingress_domain}"
         ctx.k8s.apply(
             {
                 "apiVersion": "networking.k8s.io/v1",

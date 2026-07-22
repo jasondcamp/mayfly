@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mayfly — Ephemeral environments.</title>
+    <title>mayfly — Ephemeral test environments with an AWS harness.</title>
     <link rel="icon" type="image/png" href="assets/favicon-64.png">
     <script src="assets/tailwind.js"></script>
     <link href="assets/fonts.css" rel="stylesheet">
@@ -129,7 +129,7 @@
     <main class="flex-grow max-w-6xl w-full mx-auto px-6 pt-4 md:pt-6 pb-8 md:pb-12 space-y-10 md:space-y-14">
 
         <!-- ================= HERO SECTION ================= -->
-        <section class="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-12 lg:gap-8 items-start pt-2 md:pt-4">
+        <section class="grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-12 lg:gap-8 items-start pt-2 md:pt-4">
 
             <!-- Hero Typography -->
             <div class="space-y-8 z-10 text-center md:text-left">
@@ -139,17 +139,20 @@
 
                 <div class="space-y-6 max-w-xl mx-auto md:mx-0">
                     <p class="text-xl sm:text-2xl text-brand-green font-medium">
-                        Ephemeral environments. Delightfully fast.
+                        Ephemeral environments.<br>Delightfully fast.
                     </p>
                     <p class="text-base text-text-muted leading-relaxed">
-                        One YAML spec spins up a full isolated environment — S3, Postgres/RDS, Kafka, Redis, your apps — in an isolated Kubernetes namespace.<br><br>
-                        A TTL reaper destroys it automatically.
+                        One YAML spec spins up a test environment in an isolated Kubernetes namespace: an emulated AWS harness — S3, RDS, ElastiCache, Kafka, DynamoDB — plus your apps, wired up through real AWS APIs.<br><br>
+                        Spin up. Test. Tear down. A TTL reaper destroys anything left behind.
                     </p>
                 </div>
 
                 <div class="flex flex-wrap items-center justify-center md:justify-start gap-4 pt-4">
                     <a href="#install" class="group relative inline-flex items-center gap-2 bg-brand-green text-base-950 px-6 py-3 font-bold transition-all hover:bg-white hover:shadow-glow">
                         Get started <i class="ph-bold ph-arrow-right transition-transform group-hover:translate-x-1"></i>
+                    </a>
+                    <a href="https://docs.mayfly.sh" target="_blank" class="group inline-flex items-center gap-2 border border-base-700 bg-base-900/50 hover:border-brand-green hover:text-brand-green text-text-main px-6 py-3 font-medium transition-all">
+                        <i class="ph ph-book-open text-xl"></i> Docs
                     </a>
                     <a href="https://github.com/jasondcamp/mayfly" target="_blank" class="group inline-flex items-center gap-2 border border-base-700 bg-base-900/50 hover:border-brand-green hover:text-brand-green text-text-main px-6 py-3 font-medium transition-all">
                         <i class="ph ph-github-logo text-xl"></i> GitHub
@@ -181,7 +184,7 @@
                             <span class="text-brand-amber">$ mayfly up env.yaml</span>
                         </div>
                         <div class="term-row text-text-muted mb-4">
-                            mayfly 0.3.0 <span class="mx-2">·</span> ephemeral by design
+                            mayfly 0.1.6 <span class="mx-2">·</span> ephemeral by design
                         </div>
 
                         <div class="term-row text-text-dim border-t border-dashed border-base-700 w-full my-2"></div>
@@ -190,7 +193,7 @@
                             <div class="term-row flex items-baseline">
                                 <span class="text-brand-green mr-2">✓</span>
                                 <span class="w-32 sm:w-40 mr-2 text-text-main">namespace</span>
-                                <span class="flex-grow text-text-muted truncate">env-merry-blonde-stoat-f1ee</span>
+                                <span class="flex-grow text-text-muted truncate">merry-blonde-stoat</span>
                                 <span class="w-16 text-right text-text-dim">created</span>
                                 <span class="w-12 text-right text-text-muted">0.3s</span>
                             </div>
@@ -220,7 +223,7 @@
                             </div>
                             <div class="term-row flex items-baseline">
                                 <span class="text-brand-green mr-2">✓</span>
-                                <span class="w-32 sm:w-40 mr-2 text-text-main">s3 <span class="text-text-dim">(minio)</span></span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">s3 <span class="text-text-dim">(emulated)</span></span>
                                 <span class="flex-grow"></span>
                                 <span class="w-16 text-right text-text-dim">ready</span>
                                 <span class="w-12 text-right text-text-main">4566</span>
@@ -228,7 +231,7 @@
                             </div>
                             <div class="term-row flex items-baseline">
                                 <span class="text-brand-green mr-2">✓</span>
-                                <span class="w-32 sm:w-40 mr-2 text-text-main">api <span class="text-text-dim">(echo)</span></span>
+                                <span class="w-32 sm:w-40 mr-2 text-text-main">api <span class="text-text-dim">(your app)</span></span>
                                 <span class="flex-grow"></span>
                                 <span class="w-16 text-right text-text-dim">deployed</span>
                                 <span class="w-12 text-right text-text-main">8080</span>
@@ -239,10 +242,10 @@
                         <div class="term-row text-text-dim border-t border-dashed border-base-700 w-full my-2"></div>
 
                         <div class="term-row text-brand-green mt-2 mb-1">
-                            Environment ready in 6.2s · TTL 8h · reaper scheduled
+                            Environment ready in 6.2s · ttl 8h · gone by sunset
                         </div>
                         <div class="term-row text-text-muted mb-1">
-                            <span class="text-text-dim block sm:inline">Context:</span> env-merry-blonde-stoat-f1ee
+                            <span class="text-text-dim block sm:inline">Namespace:</span> merry-blonde-stoat
                         </div>
                         <div class="term-row text-text-muted mb-4">
                             Endpoints written to Kubernetes Secrets
@@ -267,7 +270,7 @@
                 </div>
                 <h3 class="text-xl text-text-main font-semibold">One spec, full stack</h3>
                 <p class="text-sm text-text-muted leading-relaxed">
-                    Declare S3 buckets, RDS databases, ElastiCache, Kafka topics, and app deployments in one YAML file. Everything spins up together. Everything tears down together.
+                    Declare S3 buckets, RDS databases, ElastiCache, Kafka topics, and app deployments in one YAML file. An in-cluster AWS emulator plays the cloud — your apps can't tell. Everything spins up together. Everything tears down together.
                 </p>
             </div>
 
@@ -322,9 +325,9 @@
                         <div class="code-line">      <span class="hl-key">topics</span>: [<span class="hl-value">orders</span>]</div>
                         <div class="code-line"> </div>
                         <div class="code-line"><span class="hl-key">apps</span>:</div>
-                        <div class="code-line">  <span class="hl-key">echo</span>:</div>
-                        <div class="code-line">    <span class="hl-key">image</span>: <span class="hl-string">ealen/echo-server:latest</span></div>
-                        <div class="code-line">    <span class="hl-key">port</span>: <span class="hl-value">80</span></div>
+                        <div class="code-line">  <span class="hl-key">api</span>:</div>
+                        <div class="code-line">    <span class="hl-key">image</span>: <span class="hl-string">ghcr.io/acme/api:pr-1234</span></div>
+                        <div class="code-line">    <span class="hl-key">port</span>: <span class="hl-value">3000</span></div>
                         <div class="code-line">    <span class="hl-key">secrets</span>: [<span class="hl-value">rds-appdb</span>, <span class="hl-value">elasticache-cache-a</span>]</div>
                     </div>
                 </div>
@@ -393,7 +396,7 @@
                             <code class="text-brand-green">mayfly up env.yaml</code>
                         </div>
                         <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted">
-                            Create or update the environment from a spec
+                            Create or update the environment from a spec (<code class="text-text-main">--seed</code>/<code class="text-text-main">--set</code> for per-PR variants)
                         </div>
                     </div>
 
@@ -430,6 +433,15 @@
                         </div>
                         <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
                             Push expiry out
+                        </div>
+                    </div>
+
+                    <div class="contents group">
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 md:border-b-0 text-sm md:clear-left md:border-t md:border-base-border/50">
+                            <code class="text-brand-green">mayfly restart env.yaml</code>
+                        </div>
+                        <div class="p-4 bg-transparent group-hover:bg-base-700/20 transition-colors border-b border-base-border/50 text-sm text-text-muted md:border-t md:border-base-border/50">
+                            Rolling-restart apps (after re-pushing the same tag)
                         </div>
                     </div>
 
@@ -478,7 +490,7 @@
                         <span class="text-brand-amber">$</span> <span class="text-brand-green">mayfly --version</span>
                     </div>
                     <div class="text-text-main flex items-center">
-                        mayfly 0.3.0 <div class="w-2 h-3.5 bg-brand-green ml-2 animate-blink mb-0.5"></div>
+                        mayfly 0.1.6 <div class="w-2 h-3.5 bg-brand-green ml-2 animate-blink mb-0.5"></div>
                     </div>
                 </div>
             </div>
@@ -504,6 +516,10 @@
         </div>
 
         <div class="flex flex-col md:flex-row items-center justify-center gap-2 md:gap-4 text-sm text-text-dim pt-2">
+            <a href="https://docs.mayfly.sh" target="_blank" class="hover:text-text-main transition-colors flex items-center gap-1.5">
+                <i class="ph ph-book-open text-base"></i> docs.mayfly.sh
+            </a>
+            <span class="hidden md:inline">·</span>
             <a href="https://github.com/jasondcamp/mayfly" target="_blank" class="hover:text-text-main transition-colors flex items-center gap-1.5">
                 <i class="ph-fill ph-github-logo text-base"></i> github.com/jasondcamp/mayfly
             </a>

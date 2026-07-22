@@ -48,8 +48,12 @@ them, and recorded here so future changes don't regress them.
   creation and poll forever.
 - **kubedock reaps spawned pods after 1h by default** — far shorter than
   environment TTLs, and the control plane keeps reporting `available`
-  while the pods are gone. mayfly sets `--reapmax=8760h`; namespace
-  deletion is the real cleanup.
+  while the pods are gone. There is no flag to disable the reaper, so
+  mayfly sets `--reapmax=876000h` (a century — effectively never; namespace
+  deletion is the real cleanup). Environments deployed before this flag
+  existed lose their service pods after an hour and **`mayfly up` cannot
+  heal that state**: the control plane still claims the resources exist, so
+  provisioning skips them — recycle with `mayfly down && mayfly up`.
 - **kubedock needs memory headroom**: it holds every reverse-proxy listener
   and container's bookkeeping in RAM; a tight limit gets OOMKilled after a
   day, silently severing all `aws:<port>` data planes.

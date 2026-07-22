@@ -248,6 +248,12 @@ class EnvSpec(_StrictModel):
     api_version: str = Field(default=API_VERSION, alias="apiVersion")
     seed: str
     namespace_prefix: Optional[str] = Field(default=None, alias="namespacePrefix")
+    # Domain for generated ingress hosts: <app>.<namespace>.<ingressDomain>
+    # (and aws.<ns>./<alb>.<ns>. for expose/ALBs). The default resolves to
+    # 127.0.0.1 for laptop clusters; point it at your wildcard DNS zone on
+    # real clusters (e.g. envs.example.com). Per-app ingress.host overrides.
+    ingress_domain: str = Field(default="localtest.me", alias="ingressDomain")
+
     ttl: str = DEFAULT_TTL
     emulator: EmulatorSpec = Field(default_factory=EmulatorSpec)
     services: ServicesSpec = Field(default_factory=ServicesSpec)
@@ -259,6 +265,16 @@ class EnvSpec(_StrictModel):
     def _check_api_version(cls, v: str) -> str:
         if v != API_VERSION:
             raise ValueError(f"unsupported apiVersion {v!r}; expected {API_VERSION}")
+        return v
+
+    @field_validator("ingress_domain")
+    @classmethod
+    def _check_ingress_domain(cls, v: str) -> str:
+        labels = v.split(".")
+        if not labels or not all(_NAME_RE.match(lbl) for lbl in labels):
+            raise ValueError(
+                f"{v!r} is not a valid DNS domain (lowercase labels, dots)"
+            )
         return v
 
     @field_validator("seed")
