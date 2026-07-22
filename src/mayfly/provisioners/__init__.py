@@ -45,6 +45,7 @@ class ProvisionContext:
     namespace: str
     session_factory: Callable  # ()-> object with .client(service) -> boto3 client
     progress: Callable[[str], None]
+    ingress_domain: str = "localtest.me"
 
 
 _EMULATOR = {

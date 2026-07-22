@@ -247,3 +247,33 @@ def test_set_override_errors():
         apply_overrides({}, ["no-equals-sign"])
     with pytest.raises(ValueError, match="no entry named"):
         apply_overrides(_raw_example(), ["services.rds.missing.dbName=x"])
+
+
+def test_ingress_domain_default_and_custom():
+    from mayfly.spec import EnvSpec
+
+    assert EnvSpec(seed="x").ingress_domain == "localtest.me"
+    spec = EnvSpec.model_validate({"seed": "x", "ingressDomain": "envs.corp.example.com"})
+    assert spec.ingress_domain == "envs.corp.example.com"
+
+
+def test_ingress_domain_invalid():
+    import pytest
+
+    from mayfly.spec import EnvSpec
+
+    for bad in ("Envs.Example.Com", "envs..example.com", "-bad.example.com", ""):
+        with pytest.raises(Exception):
+            EnvSpec.model_validate({"seed": "x", "ingressDomain": bad})
+
+
+def test_ingress_domain_threads_into_hosts():
+    from mayfly.manifests import app_ingress_host
+    from mayfly.spec import AppSpec
+
+    app = AppSpec.model_validate({"image": "x:1", "port": 80, "ingress": {}})
+    assert app_ingress_host("api", app, "pr-42", "envs.example.com") == "api.pr-42.envs.example.com"
+    pinned = AppSpec.model_validate(
+        {"image": "x:1", "port": 80, "ingress": {"host": "api.example.com"}}
+    )
+    assert app_ingress_host("api", pinned, "pr-42", "envs.example.com") == "api.example.com"

@@ -249,7 +249,10 @@ def up(
 
     t0 = time.monotonic()
     _say(f"deploying emulator {spec.emulator.kind} ({resolve_image(spec.emulator)})")
-    k8s.apply_all(emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)), ns)
+    k8s.apply_all(
+        emulator_manifests(spec.emulator, ns, msk_bootstrap(spec), spec.ingress_domain),
+        ns,
+    )
     k8s.wait_deployment(ns, AWS_SERVICE)
     _ok("emulator ready", t0)
 
@@ -261,6 +264,7 @@ def up(
             namespace=ns,
             session_factory=_aws_session_factory(f"http://127.0.0.1:{local_port}"),
             progress=_detail,
+            ingress_domain=spec.ingress_domain,
         )
         secrets = provision_all(spec, ctx)
 
@@ -313,7 +317,9 @@ def up(
         _say(f"deploying apps: {', '.join(enabled_apps)}")
         checks_json = json.dumps(app_checks(spec.apps))
         for app_name, app_spec in enabled_apps.items():
-            k8s.apply_all(app_manifests(app_name, app_spec, ns, checks_json), ns)
+            k8s.apply_all(
+                app_manifests(app_name, app_spec, ns, checks_json, spec.ingress_domain), ns
+            )
         for app_name in enabled_apps:
             t0 = time.monotonic()
             k8s.wait_deployment(ns, app_name)
@@ -331,16 +337,20 @@ def up(
     _kv("Namespace", ns)
     for app_name, app_spec in enabled_apps.items():
         if app_spec.ingress:
-            host = app_ingress_host(app_name, app_spec, ns)
+            host = app_ingress_host(app_name, app_spec, ns, spec.ingress_domain)
             _kv(app_name.capitalize(), f"http://{host}/  (cluster ingress, port 80)")
     for alb in spec.services.alb:
         _kv(
             "ALB " + alb.name,
-            f"http://{alb.name}.{ns}.localtest.me/  (load-balanced -> {alb.target_app})",
+            f"http://{alb.name}.{ns}.{spec.ingress_domain}/  "
+            f"(load-balanced -> {alb.target_app})",
         )
     _kv("Secrets", f"kubectl -n {ns} get secrets")
     if spec.emulator.expose:
-        _kv("AWS API", f"http://aws.{ns}.localtest.me  (AWS_ENDPOINT_URL; creds test/test)")
+        _kv(
+            "AWS API",
+            f"http://aws.{ns}.{spec.ingress_domain}  (AWS_ENDPOINT_URL; creds test/test)",
+        )
     else:
         _kv("AWS API", f"kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
     _kv("Teardown", f"mayfly down {spec_file}")
@@ -440,7 +450,7 @@ def render(
     docs = [
         {"mayfly": {"name": env_name(spec.seed), "namespace": ns, "ttl": spec.ttl,
                     "emulator": resolve_image(spec.emulator), "specHash": spec.spec_hash()}},
-        *emulator_manifests(spec.emulator, ns, msk_bootstrap(spec)),
+        *emulator_manifests(spec.emulator, ns, msk_bootstrap(spec), spec.ingress_domain),
     ]
     for init_name, init_spec in spec.init_apps.items():
         if init_spec.enabled:
@@ -448,7 +458,9 @@ def render(
     checks_json = json.dumps(app_checks(spec.apps))
     for app_name, app_spec in spec.apps.items():
         if app_spec.enabled:
-            docs.extend(app_manifests(app_name, app_spec, ns, checks_json))
+            docs.extend(
+                app_manifests(app_name, app_spec, ns, checks_json, spec.ingress_domain)
+            )
     typer.echo(yaml.safe_dump_all(docs, sort_keys=False))
 
 

@@ -84,6 +84,8 @@ apiVersion: mayfly/v1alpha1
 seed: pr-1234          # deterministic env name derives from this
 # namespacePrefix: env # namespace becomes env-<name>; omit for bare <name>
 ttl: 8h                # reaped after this
+# ingressDomain: envs.example.com  # domain for generated ingress hosts
+#                                  # (default localtest.me -> 127.0.0.1)
 
 emulator:
   kind: ministack      # ministack | floci; omit for pinned default

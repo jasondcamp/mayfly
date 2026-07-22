@@ -13,6 +13,9 @@ apiVersion: mayfly/v1alpha1
 seed: pr-0               # always overridden by --seed in CI
 namespacePrefix: pr
 ttl: 72h
+# ingressDomain: envs.example.com   # point a wildcard DNS record at your
+#                                   # ingress controller; PR URLs become
+#                                   # backend.pr-<name>.envs.example.com
 
 services:
   s3:

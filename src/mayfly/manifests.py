@@ -121,8 +121,10 @@ def init_app_manifest(name: str, init: InitAppSpec) -> dict:
     return job
 
 
-def app_ingress_host(name: str, app: AppSpec, namespace: str) -> str:
-    return app.ingress.host or f"{name}.{namespace}.localtest.me"
+def app_ingress_host(
+    name: str, app: AppSpec, namespace: str, domain: str = "localtest.me"
+) -> str:
+    return app.ingress.host or f"{name}.{namespace}.{domain}"
 
 
 def app_checks(apps: dict) -> list[dict]:
@@ -143,7 +145,11 @@ def app_checks(apps: dict) -> list[dict]:
 
 
 def app_manifests(
-    name: str, app: AppSpec, namespace: str, checks_json: str = ""
+    name: str,
+    app: AppSpec,
+    namespace: str,
+    checks_json: str = "",
+    ingress_domain: str = "localtest.me",
 ) -> list[dict]:
     env = {
         **AWS_ENV,
@@ -224,7 +230,7 @@ def app_manifests(
         },
     ]
     if app.ingress:
-        host = app_ingress_host(name, app, namespace)
+        host = app_ingress_host(name, app, namespace, ingress_domain)
         rule: dict = {
             "http": {
                 "paths": [

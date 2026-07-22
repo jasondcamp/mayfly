@@ -50,7 +50,9 @@ readiness probe. The summary prints your URLs:
 ```
 
 `*.localtest.me` resolves to `127.0.0.1` for free — with the k3d port
-mapping above, those URLs work in your browser immediately.
+mapping above, those URLs work in your browser immediately. On a real
+cluster, set [`ingressDomain`](spec/environment#ingressdomain) to your
+wildcard DNS zone and the same URLs appear under your own domain.
 
 ## The CLI
 

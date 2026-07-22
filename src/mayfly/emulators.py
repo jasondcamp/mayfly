@@ -166,9 +166,9 @@ def _kubedock_container() -> dict:
     }
 
 
-def _aws_ingress(namespace: str) -> dict:
+def _aws_ingress(namespace: str, domain: str) -> dict:
     """Opt-in (emulator.expose) ingress for the AWS API: laptop CLI/SDK
-    access at aws.<namespace>.localtest.me with no port-forward."""
+    access at aws.<namespace>.<ingressDomain> with no port-forward."""
     return {
         "apiVersion": "networking.k8s.io/v1",
         "kind": "Ingress",
@@ -176,7 +176,7 @@ def _aws_ingress(namespace: str) -> dict:
         "spec": {
             "rules": [
                 {
-                    "host": f"aws.{namespace}.localtest.me",
+                    "host": f"aws.{namespace}.{domain}",
                     "http": {
                         "paths": [
                             {
@@ -248,7 +248,10 @@ def _readiness() -> dict:
 
 
 def emulator_manifests(
-    em: EmulatorSpec, namespace: str, msk_bootstrap: Optional[str] = None
+    em: EmulatorSpec,
+    namespace: str,
+    msk_bootstrap: Optional[str] = None,
+    ingress_domain: str = "localtest.me",
 ) -> list[dict]:
     image = resolve_image(em)
     if em.kind == "ministack":
@@ -284,7 +287,7 @@ def emulator_manifests(
             _aws_service(extra_ports=True),
         ]
         if em.expose:
-            manifests.append(_aws_ingress(namespace))
+            manifests.append(_aws_ingress(namespace, ingress_domain))
         return manifests
 
     floci = {
@@ -300,5 +303,5 @@ def emulator_manifests(
     }
     manifests = [_deployment([floci]), _aws_service(extra_ports=False)]
     if em.expose:
-        manifests.append(_aws_ingress(namespace))
+        manifests.append(_aws_ingress(namespace, ingress_domain))
     return manifests
