@@ -6,8 +6,8 @@ name: Build and Push Docker Images
 # latest, and the version from pyproject.toml.
 #
 # Images: mayfly-dragonfly (dragonfly/), mayfly-hello (hello/),
-# mayfly-ministack (emulator/), mayfly-caddis (caddis/),
-# mayfly-caddis-frontend (caddis-frontend/), mayfly-cli (repo root).
+# mayfly-caddis (caddis/), mayfly-caddis-frontend (caddis-frontend/),
+# mayfly-cli (repo root).
 
 on:
   push:
@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend, mayfly-cli]
+        image: [mayfly-dragonfly, mayfly-hello, mayfly-caddis, mayfly-caddis-frontend, mayfly-cli]
         platform:
           - linux/amd64
           - linux/arm64
@@ -52,8 +52,6 @@ jobs:
             context: dragonfly
           - image: mayfly-hello
             context: hello
-          - image: mayfly-ministack
-            context: emulator
           - image: mayfly-caddis
             context: caddis
           - image: mayfly-caddis-frontend
@@ -119,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [mayfly-dragonfly, mayfly-hello, mayfly-ministack, mayfly-caddis, mayfly-caddis-frontend, mayfly-cli]
+        image: [mayfly-dragonfly, mayfly-hello, mayfly-caddis, mayfly-caddis-frontend, mayfly-cli]
     permissions:
       contents: read
       packages: write
