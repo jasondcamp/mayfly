@@ -1,9 +1,9 @@
 [project]
 name = "mayfly-cli"
-version = "0.1.7"
+version = "0.2.0"
 description = "Short lived ephemeral environments on Kubernetes: one YAML spec, an isolated namespace with emulated AWS + real service pods, TTL teardown"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 keywords = ["ephemeral-environments", "kubernetes", "preview-environments", "aws-emulator", "testing"]
@@ -12,7 +12,6 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -58,6 +57,14 @@ only-include = ["src", "tests"]
 [tool.ruff]
 line-length = 100
 src = ["src"]
+
+[tool.ruff.lint]
+# Explicit selection so lint doesn't drift when ruff's defaults change.
+select = ["E4", "E7", "E9", "F", "UP", "B", "C4", "PERF"]
+ignore = [
+  "B008",    # typer's declarative Option/Argument call-in-default pattern
+  "PERF203", # try/except in loop: retry/skip loops are the point here
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -5,14 +5,12 @@ import logging
 import sys
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
-
-from urllib3.exceptions import MaxRetryError
 from pathlib import Path
 
 import boto3
 import typer
 import yaml
+from urllib3.exceptions import MaxRetryError
 
 from . import (
     CREATED_AT_ANNOTATION,
@@ -48,6 +46,7 @@ from .manifests import (
 from .naming import env_name, namespace_for
 from .provisioners import ProvisionContext, provision_all
 from .spec import EnvSpec, load_spec, parse_ttl
+
 
 class _Mayfly(typer.Typer):
     """Typer app that turns connectivity failures into one-line errors."""
@@ -97,7 +96,7 @@ def _detail(msg: str) -> None:
     typer.secho(f"    {msg}", dim=True)
 
 
-def _ok(label: str, started: Optional[float] = None) -> None:
+def _ok(label: str, started: float | None = None) -> None:
     """A completed step, website-terminal style: green check, dim timing."""
     elapsed = "" if started is None else f"{time.monotonic() - started:.1f}s"
     typer.echo(
@@ -122,14 +121,14 @@ def _kv(label: str, value: str) -> None:
 
 def _load(
     spec_file: Path,
-    seed: Optional[str] = None,
-    overrides: Optional[list[str]] = None,
+    seed: str | None = None,
+    overrides: list[str] | None = None,
 ) -> EnvSpec:
     try:
         spec = load_spec(spec_file, overrides)
     except Exception as e:
         typer.echo(f"spec error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
     if seed:
         spec = spec.model_copy(update={"seed": seed})
     return spec
@@ -192,10 +191,10 @@ def version():
 @app.command()
 def up(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    seed: Optional[str] = SEED_OPT,
+    seed: str | None = SEED_OPT,
     overrides: list[str] = SET_OPT,
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
     pull_secret_namespace: str = typer.Option(
         "default",
         "--pull-secret-namespace",
@@ -294,7 +293,7 @@ def up(
             if logs:
                 typer.echo("--- init job logs ---", err=True)
                 typer.echo(logs, err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
     if enabled_apps:
         _say(f"deploying apps: {', '.join(enabled_apps)}")
@@ -342,10 +341,10 @@ def up(
 @app.command()
 def down(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    seed: Optional[str] = SEED_OPT,
-    name: Optional[str] = typer.Option(None, "--name", help="environment name instead of spec"),
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    seed: str | None = SEED_OPT,
+    name: str | None = typer.Option(None, "--name", help="environment name instead of spec"),
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Destroy the environment (deletes its namespace)."""
     spec = _load(spec_file, seed)
@@ -364,7 +363,7 @@ def down(
 
 
 @app.command("list")
-def list_envs(context: Optional[str] = CTX_OPT, kubeconfig: Optional[str] = KCFG_OPT):
+def list_envs(context: str | None = CTX_OPT, kubeconfig: str | None = KCFG_OPT):
     """List mayfly environments."""
     k8s = K8s(context, kubeconfig)
     namespaces = k8s.list_namespaces(f"{MANAGED_LABEL}=true")
@@ -388,15 +387,15 @@ def list_envs(context: Optional[str] = CTX_OPT, kubeconfig: Optional[str] = KCFG
         rows.append((n.metadata.name, labels.get(SEED_LABEL, "-"), _fmt_delta(age), expires_in))
     widths = [max(len(r[i]) for r in rows) for i in range(len(rows[0]))]
     for r in rows:
-        typer.echo("  ".join(c.ljust(w) for c, w in zip(r, widths)))
+        typer.echo("  ".join(c.ljust(w) for c, w in zip(r, widths, strict=True)))
 
 
 @app.command()
 def status(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    seed: Optional[str] = SEED_OPT,
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    seed: str | None = SEED_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Show pods and provisioned endpoints for the environment."""
     spec = _load(spec_file, seed)
@@ -424,7 +423,7 @@ def status(
 @app.command()
 def render(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    seed: Optional[str] = SEED_OPT,
+    seed: str | None = SEED_OPT,
     overrides: list[str] = SET_OPT,
 ):
     """Print the resolved plan (name, namespace, manifests) without touching the cluster."""
@@ -450,12 +449,12 @@ def render(
 @app.command()
 def restart(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    seed: Optional[str] = SEED_OPT,
+    seed: str | None = SEED_OPT,
     apps_filter: list[str] = typer.Option(
         [], "--app", help="restart only these apps (repeatable); default: all apps"
     ),
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Rolling-restart the environment's apps (e.g. after pushing new images
     under the same tag). Services and the emulator are left untouched."""
@@ -487,14 +486,14 @@ def install(
     schedule: str = typer.Option(
         DEFAULT_SCHEDULE, "--schedule", help="reaper cron schedule"
     ),
-    image: Optional[str] = typer.Option(
+    image: str | None = typer.Option(
         None,
         "--image",
         help="mayfly-cli image for the reaper (default: the published image "
         "matching this CLI's version)",
     ),
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Install the in-cluster reaper: a CronJob in the mayfly-system
     namespace that runs `mayfly reap` on a schedule, so expired
@@ -502,6 +501,19 @@ def install(
     k8s = K8s(context, kubeconfig)
     img = image or default_cli_image()
     _say(f"installing reaper into {SYSTEM_NAMESPACE} (schedule {schedule!r})")
+    # A just-uninstalled namespace may still be terminating; applying into it
+    # "succeeds" and then everything is swept away with the termination.
+    obj = k8s.get_namespace(SYSTEM_NAMESPACE)
+    if obj is not None and (obj.status and obj.status.phase == "Terminating"):
+        _detail(f"{SYSTEM_NAMESPACE} is terminating; waiting for it to finish")
+        deadline = time.monotonic() + 120
+        while k8s.get_namespace(SYSTEM_NAMESPACE) is not None:
+            if time.monotonic() > deadline:
+                typer.echo(
+                    f"error: {SYSTEM_NAMESPACE} still terminating after 120s", err=True
+                )
+                raise typer.Exit(1)
+            time.sleep(2)
     for m in reaper_manifests(img, schedule):
         k8s.apply(m, namespace=SYSTEM_NAMESPACE)
         _detail(f"{m['kind'].lower()} {m['metadata']['name']} applied")
@@ -512,8 +524,8 @@ def install(
 
 @app.command()
 def uninstall(
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Remove the in-cluster reaper (namespace mayfly-system and its RBAC).
     Environments are untouched."""
@@ -528,8 +540,8 @@ def uninstall(
 @app.command()
 def reap(
     dry_run: bool = typer.Option(False, "--dry-run", help="report only, delete nothing"),
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Delete environments whose TTL has expired."""
     k8s = K8s(context, kubeconfig)
@@ -562,10 +574,10 @@ def reap(
 @app.command()
 def extend(
     spec_file: Path = typer.Argument(Path("env.yaml"), exists=True, dir_okay=False),
-    seed: Optional[str] = SEED_OPT,
+    seed: str | None = SEED_OPT,
     ttl: str = typer.Option(..., "--ttl", help="new TTL from now, e.g. 4h"),
-    context: Optional[str] = CTX_OPT,
-    kubeconfig: Optional[str] = KCFG_OPT,
+    context: str | None = CTX_OPT,
+    kubeconfig: str | None = KCFG_OPT,
 ):
     """Push the environment's expiry out to now + TTL."""
     delta = parse_ttl(ttl)

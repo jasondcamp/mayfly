@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.9", "3.13"]  # oldest supported + newest
+        python: ["3.10", "3.13"]  # oldest supported + newest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
