@@ -55,8 +55,8 @@ services:
   `describe-db-instances` returns a working endpoint.
 - **elasticache** — `version` selects the container image tag (the default
   emulator maps redis versions to the major tag: `7.2` → `redis:7-alpine`).
-  Engine `valkey` requires mayfly's patched emulator image; `memcached`
-  listens on 11211 with its own secret keys.
+  Engines: `redis`, `valkey` (MiniStack ≥ 1.4.4), and `memcached` (listens
+  on 11211 with its own secret keys).
 - **msk** — hybrid: mayfly deploys a real Redpanda broker natively, then
   registers the cluster through the MSK control-plane API, so
   `ListClusters` / `DescribeCluster` / `GetBootstrapBrokers` all answer

@@ -70,9 +70,9 @@ gone). `mayfly extend --ttl 4h` pushes expiry out from now.
 ```yaml
 emulator:
   kind: ministack             # ministack | floci (default: ministack)
-  image: ghcr.io/jasondcamp/mayfly-ministack   # optional override
-  version: "0.1.3"            # image tag; 'latest' is rejected
-  expose: false               # opt-in: AWS API at aws.<namespace>.localtest.me
+  # image: my-registry/ministack   # optional override (self-hosted mirror etc.)
+  # version: "1.4.4"               # image tag; 'latest' is rejected
+  expose: false               # opt-in: AWS API at aws.<namespace>.<ingressDomain>
 ```
 
 ### Laptop access to the AWS API
@@ -107,8 +107,7 @@ The emulator runs inside the namespace behind a Service named `aws` on port
 4566. Every app pod gets `AWS_ENDPOINT_URL=http://aws:4566` with
 `test`/`test` credentials, so unmodified AWS SDK code works.
 
-Defaults are **digest-pinned** upstream images. mayfly's patched image
-(source in the repo's `emulator/` directory) is required for
-`services.alb` and ElastiCache engine `valkey` — `up` errors up-front,
-before touching the cluster, if the spec needs it while on the stock
-default.
+Defaults are **digest-pinned** upstream images; the pinned MiniStack
+(≥ 1.4.4) includes the ALB data plane and the valkey ElastiCache engine —
+both upstreamed from mayfly. Override `image`/`version` only to pin your
+own build or a self-hosted mirror.

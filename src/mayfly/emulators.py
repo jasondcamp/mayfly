@@ -57,9 +57,12 @@ class EmulatorInfo:
 
 EMULATORS: dict[str, EmulatorInfo] = {
     "ministack": EmulatorInfo(
+        # 1.4.4 includes mayfly's upstreamed ALB data plane (instance/ip
+        # targets, ministack#1113) and ElastiCache valkey engine (#1115) —
+        # the emulator/ overlay image is retired.
         image="ministackorg/ministack",
-        version="1.4.3",
-        digest="sha256:22a278f078f5f88b3437abd1a4daea101bbb1b3d5d7e35353c39029a6ade09e0",
+        version="1.4.4",
+        digest="sha256:7485cab02cd88fe8bfabb3d187fabd71e5f30bd3efe802e1f2d6619a35824f31",
         # msk is hybrid: control plane in ministack (MINISTACK_MSK_BOOTSTRAP
         # routes GetBootstrapBrokers to the broker mayfly deploys natively);
         # the Kafka wire protocol itself is served by that broker.

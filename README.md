@@ -90,7 +90,7 @@ ttl: 8h                # reaped after this
 emulator:
   kind: ministack      # ministack | floci; omit for pinned default
   # image: ministackorg/ministack   # override to self-host/pin your own
-  # version: "1.4.3"                # tag; 'latest' is rejected
+  # version: "1.4.4"                # tag; 'latest' is rejected
 
 services:
   s3:
@@ -102,7 +102,7 @@ services:
       # backend: auto  # auto | emulator | native
   elasticache:
     - name: cache-a
-      engine: redis    # redis | valkey | memcached (valkey needs the patched emulator image)
+      engine: redis    # redis | valkey | memcached
       version: "7.2"   # engine version -> container image tag
   msk:
     - name: events
@@ -158,13 +158,11 @@ services:
 Requests to `http://aws:4566/_alb/hello-alb/` (or Host header
 `hello-alb.alb.localhost`) proxy through the ALB to the app with ALB-style
 `X-Forwarded-*` and `X-Amzn-Trace-Id` headers; the `alb-<name>` secret
-carries `ALB_URL`/`ALB_DNS_NAME`. This requires mayfly's patched emulator
-image (`ghcr.io/jasondcamp/mayfly-ministack`, source in `emulator/`) — upstream
-MiniStack's ALB data plane forwards to Lambda targets only; the one-file
-patch (`emulator/patches/alb.py`) adds HTTP proxying for `instance`/`ip`
-targets and is a candidate for an upstream PR. Path-pattern/host-header
-listener rules, redirects, and fixed-responses all come from upstream and
-work against the same data plane. For real AWS ALBs later, apps take
+carries `ALB_URL`/`ALB_DNS_NAME`. The data plane for `instance`/`ip`
+targets was contributed upstream by mayfly (ministack#1113) and ships in
+MiniStack ≥ 1.4.4, the pinned default. Path-pattern/host-header listener
+rules, redirects, and fixed-responses all work against the same data
+plane. For real AWS ALBs later, apps take
 `ingress: {className: alb, annotations: {...}}` (see `examples/env-alb.yaml`).
 
 ## dragonfly — the connectivity verifier
@@ -186,9 +184,10 @@ discovery APIs: if a `describe-*` call returns an endpoint that doesn't
 work, dragonfly is the first to know.
 
 Published as `ghcr.io/jasondcamp/mayfly-dragonfly` (multi-arch; siblings:
-`mayfly-hello`, `mayfly-ministack` — `scripts/publish-images.sh` builds and
-pushes all three). Clusters pull them directly; for local iteration the e2e
-script builds the working tree under the same names and imports them.
+`mayfly-hello`, `mayfly-caddis`, `mayfly-caddis-frontend`, `mayfly-cli` —
+`scripts/publish-images.sh` builds and pushes all five). Clusters pull them
+directly; for local iteration the e2e script builds the working tree under
+the same names and imports them.
 
 ```bash
 mayfly up examples/env.yaml

@@ -73,17 +73,60 @@ them, and recorded here so future changes don't regress them.
   AWS state while spawned pods live on. Re-running `mayfly up` heals;
   `mayfly status` reads cluster state (Secrets), never emulator memory.
 
-## The emulator patches
+## Emulator provenance
 
-The default emulator image (`ghcr.io/jasondcamp/mayfly-ministack`) is
-upstream MiniStack, digest-pinned, plus two single-file overlays (source in
-`emulator/patches/`):
+The default emulator is stock upstream MiniStack, digest-pinned. Two mayfly
+features began life as single-file overlays in a patched image
+(`ghcr.io/jasondcamp/mayfly-ministack`, now retired): the **ALB HTTP data
+plane** for `instance`/`ip` targets and the **valkey ElastiCache engine**.
+Both were upstreamed (ministack#1113, #1115) and ship in MiniStack ≥ 1.4.4,
+so the stock pin covers everything. Old specs pinning the retired patched
+image keep working — it stays published on GHCR — but there is no reason
+to use it for new environments.
 
-1. **ALB HTTP data plane** — upstream forwards ALB traffic to Lambda
-   targets only; the patch proxies `instance`/`ip` targets over HTTP with
-   ALB-realistic headers. Submitted upstream.
-2. **valkey engine for ElastiCache** — `valkey/valkey:{major.minor}-alpine`
-   images, engine plumbing through single-node and cluster-mode spawns.
+## The overlay pattern
 
-When these merge upstream, the overlays and the `emulator/` directory
-delete cleanly — mayfly reverts to the stock pinned image.
+The retired image above followed a deliberate pattern for when mayfly needs
+upstream behavior that doesn't exist yet. It ran for four days, shipped two
+features ahead of upstream, and deleted cleanly — reuse it next time:
+
+**When to reach for it:** a dependency (emulator, sidecar, ...) is missing
+a bounded feature or has a bug, you can implement it, and waiting for
+upstream would block mayfly. The overlay and an upstream PR are one
+decision — never carry a patch you aren't actively upstreaming.
+
+**Structure** — an `emulator/`-style directory in this repo:
+
+```text
+emulator/
+  Dockerfile      # FROM <upstream>@<digest>  (the SAME digest mayfly pins)
+                  # COPY patches/x.py <upstream module path>/x.py
+  patches/x.py    # complete upstream file + your change — one file per
+                  # concern, each mapping 1:1 to an upstream PR
+  README.md       # per patch: what/why, upstream PR link, retirement terms
+```
+
+**Rules that made it work:**
+
+- **Whole-file overlays, not diffs.** `COPY` over the module at build time —
+  no patch tooling, and what runs is exactly what you read. Keep each file
+  identical to upstream except the change, so the overlay diff *is* the
+  upstream PR diff.
+- **Base is the pinned digest** from the `EMULATORS` registry — the overlay
+  changes exactly one thing relative to what mayfly already runs.
+- **Publish like any mayfly image**: `ghcr.io/jasondcamp/mayfly-<name>`,
+  versioned with mayfly (pyproject), multi-arch, built by the CI matrix and
+  `scripts/publish-images.sh`.
+- **Core stays agnostic**: the spec's `emulator.image`/`version` override
+  selects the patched image; nothing else in mayfly knows it exists. Add an
+  `up`-time guard that errors clearly when a spec uses the feature on the
+  stock image (the ALB/valkey guard lived in `cli.py` while the divergence
+  existed).
+- **Write the patch to upstream's conventions from day one** — their style,
+  their tests, their CHANGELOG — and submit promptly. The overlay is a
+  waiting room, not a fork.
+- **Retirement is part of the pattern** (this exact sequence ran for
+  1.4.4): upstream merges *and releases* → bump the pin to stock, delete
+  the directory, drop the CI/publish entries and the guard, update docs.
+  Merged-but-unreleased doesn't count — pins point at releases (kubedock's
+  `--reapmax` fix waited in exactly that state).

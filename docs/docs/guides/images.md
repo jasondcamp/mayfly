@@ -4,14 +4,13 @@ sidebar_position: 5
 
 # Images and releases
 
-mayfly ships six container images, published multi-arch (amd64 + arm64)
+mayfly ships five container images, published multi-arch (amd64 + arm64)
 to GHCR:
 
 | Image | Source | Purpose |
 |---|---|---|
 | `ghcr.io/jasondcamp/mayfly-dragonfly` | `dragonfly/` | connectivity verifier |
 | `ghcr.io/jasondcamp/mayfly-hello` | `hello/` | LB/ingress test app: shows serving pod + forwarded headers |
-| `ghcr.io/jasondcamp/mayfly-ministack` | `emulator/` | MiniStack + mayfly patches (ALB HTTP data plane, valkey engine) |
 | `ghcr.io/jasondcamp/mayfly-caddis` | `caddis/` | sample app: Flask API + Kafka worker |
 | `ghcr.io/jasondcamp/mayfly-caddis-frontend` | `caddis-frontend/` | sample app UI: nginx + same-origin /api proxy |
 | `ghcr.io/jasondcamp/mayfly-cli` | repo root `Dockerfile` | the CLI in a container: runs the in-cluster reaper (`mayfly install`); usable in CI pipelines |

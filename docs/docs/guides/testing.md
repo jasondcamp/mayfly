@@ -19,7 +19,7 @@ make e2e     # the full loop on a disposable k3d cluster
 kubeconfig:
 
 1. creates a throwaway k3d cluster;
-2. builds the mayfly images (dragonfly, hello, the patched emulator) from
+2. builds the mayfly images (dragonfly, hello, caddis) from
    the working tree **under their published names** and imports them — so
    e2e always tests your local code and the cluster never pulls;
 3. `mayfly up examples/env.yaml`;

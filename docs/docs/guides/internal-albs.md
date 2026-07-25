@@ -36,11 +36,9 @@ The `alb-<name>` secret carries `ALB_URL` (in-cluster),
 
 ## Requirements
 
-The stock MiniStack image routes ALB traffic to **Lambda targets only** —
-mayfly's patched emulator image adds HTTP proxying for `instance`/`ip`
-targets (a one-file overlay, `emulator/patches/alb.py`, submitted upstream).
-`mayfly up` errors clearly if a spec declares `alb:` while on the stock
-emulator image.
+MiniStack ≥ 1.4.4 (mayfly's pinned default) — the data-plane proxying for
+`instance`/`ip` targets was contributed upstream by mayfly
+(ministack#1113). No special image is needed.
 
 ## Testing recipes
 
