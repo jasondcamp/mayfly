@@ -4,7 +4,7 @@ import hashlib
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -36,8 +36,8 @@ def _validate_dns_name(v: str) -> str:
 
 class EmulatorSpec(_StrictModel):
     kind: Literal["ministack", "floci"] = "ministack"
-    image: Optional[str] = None  # default: pinned per kind (see emulators.EMULATORS)
-    version: Optional[str] = None  # image tag; default: pinned per kind
+    image: str | None = None  # default: pinned per kind (see emulators.EMULATORS)
+    version: str | None = None  # image tag; default: pinned per kind
     # expose the (unauthenticated) AWS API at aws.<namespace>.localtest.me via
     # the cluster ingress — laptop CLI/SDK convenience. Default OFF: the API
     # can mutate environment state and read Secrets Manager values, so it
@@ -46,7 +46,7 @@ class EmulatorSpec(_StrictModel):
 
     @field_validator("version")
     @classmethod
-    def _no_latest(cls, v: Optional[str]) -> Optional[str]:
+    def _no_latest(cls, v: str | None) -> str | None:
         if v == "latest":
             raise ValueError("emulator.version must be a pinned tag, not 'latest'")
         return v
@@ -77,7 +77,7 @@ class RdsSpec(_StrictModel):
 class ElastiCacheSpec(_StrictModel):
     name: str
     engine: Literal["redis", "valkey", "memcached"] = "redis"
-    version: Optional[str] = None  # engine version -> image tag; default per engine
+    version: str | None = None  # engine version -> image tag; default per engine
     backend: Backend = "auto"
 
     _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
@@ -111,7 +111,7 @@ class DynamoSpec(_StrictModel):
 
 class SecretsManagerSpec(_StrictModel):
     name: str  # SM naming: letters/digits and /_+=.@- (slashes are idiomatic)
-    value: Optional[str] = None  # literal fixture value (test data, not prod creds)
+    value: str | None = None  # literal fixture value (test data, not prod creds)
     generate: bool = False  # random value per environment (kept across re-ups)
     backend: Backend = "auto"  # emulator-only (in-process)
 
@@ -152,26 +152,26 @@ class ServicesSpec(_StrictModel):
 class ResourcesSpec(_StrictModel):
     cpu: str = "10m"  # request
     memory: str = "32Mi"  # request
-    cpu_limit: Optional[str] = Field(default=None, alias="cpuLimit")
+    cpu_limit: str | None = Field(default=None, alias="cpuLimit")
     memory_limit: str = Field(default="256Mi", alias="memoryLimit")
 
 
 class ReadinessSpec(_StrictModel):
     tcp: bool = False  # tcpSocket probe instead of httpGet (non-HTTP apps)
     path: str = "/"
-    port: Optional[int] = None  # default: the app's port
+    port: int | None = None  # default: the app's port
     initial_delay_seconds: int = Field(default=2, alias="initialDelaySeconds", ge=0)
     period_seconds: int = Field(default=5, alias="periodSeconds", ge=1)
-    timeout_seconds: Optional[int] = Field(default=None, alias="timeoutSeconds", ge=1)
+    timeout_seconds: int | None = Field(default=None, alias="timeoutSeconds", ge=1)
 
 
 class SecretRefSpec(_StrictModel):
     name: str
-    prefix: Optional[str] = None  # env-var prefix, e.g. CACHE_A_ -> CACHE_A_REDIS_HOST
+    prefix: str | None = None  # env-var prefix, e.g. CACHE_A_ -> CACHE_A_REDIS_HOST
 
     @field_validator("prefix")
     @classmethod
-    def _check_prefix(cls, v: Optional[str]) -> Optional[str]:
+    def _check_prefix(cls, v: str | None) -> str | None:
         if v is not None and not re.match(r"^[A-Z][A-Z0-9_]*_$", v):
             raise ValueError(
                 f"prefix {v!r} must be UPPER_SNAKE ending with '_' (e.g. CACHE_A_)"
@@ -179,14 +179,14 @@ class SecretRefSpec(_StrictModel):
         return v
 
 
-SecretRef = Union[str, SecretRefSpec]
+SecretRef = Union[str, SecretRefSpec]  # noqa: UP007 — pydantic alias, kept explicit
 
 
 class AppIngressSpec(_StrictModel):
     # default: <app>.<namespace>.localtest.me; "*" matches any host (useful
     # for hitting an ALB's raw DNS name before real DNS exists)
-    host: Optional[str] = None
-    class_name: Optional[str] = Field(default=None, alias="className")
+    host: str | None = None
+    class_name: str | None = Field(default=None, alias="className")
     annotations: dict[str, str] = Field(default_factory=dict)  # e.g. alb.ingress.kubernetes.io/*
     # escape hatch, same merge semantics as the app-level patch: deep-merged
     # onto the generated Ingress (mayfly re-asserts the resource name)
@@ -208,9 +208,9 @@ class AppSpec(_StrictModel):
     # a prefix namespaces colliding keys (e.g. several elasticache secrets)
     secrets: list[SecretRef] = Field(default_factory=list)
     resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
-    readiness: Optional[ReadinessSpec] = None  # httpGet probe; omit for none
-    image_pull_secret: Optional[str] = Field(default=None, alias="imagePullSecret")
-    ingress: Optional[AppIngressSpec] = None  # opt-in; omit for cluster-internal only
+    readiness: ReadinessSpec | None = None  # httpGet probe; omit for none
+    image_pull_secret: str | None = Field(default=None, alias="imagePullSecret")
+    ingress: AppIngressSpec | None = None  # opt-in; omit for cluster-internal only
     # escape hatch for anything without a dedicated field: arbitrary YAML
     # deep-merged onto the generated Deployment (maps merge; lists of named
     # objects merge by name; other lists replace). mayfly re-asserts its
@@ -231,7 +231,7 @@ class InitAppSpec(_StrictModel):
     env: dict[str, str] = Field(default_factory=dict)
     secrets: list[SecretRef] = Field(default_factory=list)
     resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
-    image_pull_secret: Optional[str] = Field(default=None, alias="imagePullSecret")
+    image_pull_secret: str | None = Field(default=None, alias="imagePullSecret")
     timeout_seconds: int = Field(default=600, alias="timeoutSeconds", ge=1)
     # always:    run on every up (default — converge semantics)
     # once:      run only if it has never succeeded in this environment
@@ -247,7 +247,7 @@ class InitAppSpec(_StrictModel):
 class EnvSpec(_StrictModel):
     api_version: str = Field(default=API_VERSION, alias="apiVersion")
     seed: str
-    namespace_prefix: Optional[str] = Field(default=None, alias="namespacePrefix")
+    namespace_prefix: str | None = Field(default=None, alias="namespacePrefix")
     # Domain for generated ingress hosts: <app>.<namespace>.<ingressDomain>
     # (and aws.<ns>./<alb>.<ns>. for expose/ALBs). The default resolves to
     # 127.0.0.1 for laptop clusters; point it at your wildcard DNS zone on
@@ -286,7 +286,7 @@ class EnvSpec(_StrictModel):
 
     @field_validator("namespace_prefix")
     @classmethod
-    def _check_prefix(cls, v: Optional[str]) -> Optional[str]:
+    def _check_prefix(cls, v: str | None) -> str | None:
         if v is not None:
             _validate_dns_name(v)
             if len(v) > 30:
@@ -386,7 +386,7 @@ def _list_index(node: list, key: str, trail: str) -> int:
     raise ValueError(f"--set: no entry named {key!r} at {trail!r} (have: {names})")
 
 
-def load_spec(path: Union[str, Path], overrides: Optional[list[str]] = None) -> EnvSpec:
+def load_spec(path: str | Path, overrides: list[str] | None = None) -> EnvSpec:
     raw = yaml.safe_load(Path(path).read_text())
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: spec must be a YAML mapping")

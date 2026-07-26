@@ -25,12 +25,12 @@ from ..k8s import K8s
 from ..spec import Backend, EnvSpec
 from .aws import (
     AlbProvisioner,
-    SecretsManagerProvisioner,
     DynamoProvisioner,
     ElastiCacheProvisioner,
     MskHybridProvisioner,
     RdsProvisioner,
     S3Provisioner,
+    SecretsManagerProvisioner,
 )
 from .native import (
     ElastiCacheNativeProvisioner,

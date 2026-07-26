@@ -6,7 +6,6 @@ import re
 import subprocess
 import time
 from collections.abc import Iterator
-from typing import Optional
 
 from kubernetes import client, config, dynamic
 from kubernetes.client import ApiException
@@ -26,7 +25,7 @@ class ClusterUnreachable(RuntimeError):
     """The Kubernetes API server can't be reached; message is user-facing."""
 
 
-def _unreachable(e: MaxRetryError, context: Optional[str]) -> ClusterUnreachable:
+def _unreachable(e: MaxRetryError, context: str | None) -> ClusterUnreachable:
     host = f"{e.pool.host}:{e.pool.port}"
     dns_failure = isinstance(e.reason, NameResolutionError) or (
         "resolve" in str(e.reason).lower() or "name or service not known" in str(e.reason).lower()
@@ -44,7 +43,7 @@ def _unreachable(e: MaxRetryError, context: Optional[str]) -> ClusterUnreachable
 
 
 class K8s:
-    def __init__(self, context: Optional[str] = None, kubeconfig: Optional[str] = None):
+    def __init__(self, context: str | None = None, kubeconfig: str | None = None):
         try:
             config.load_kube_config(config_file=kubeconfig, context=context)
         except ConfigException as e:
@@ -69,18 +68,18 @@ class K8s:
             raise _unreachable(e, context) from e
 
     # ------------------------------------------------------------ apply
-    def apply(self, manifest: dict, namespace: Optional[str] = None) -> None:
+    def apply(self, manifest: dict, namespace: str | None = None) -> None:
         """Server-side apply a single manifest dict."""
         resource = self.dyn.resources.get(
             api_version=manifest["apiVersion"], kind=manifest["kind"]
         )
-        kwargs = dict(
-            body=manifest,
-            name=manifest["metadata"]["name"],
-            content_type="application/apply-patch+yaml",
-            field_manager=FIELD_MANAGER,
-            force_conflicts=True,
-        )
+        kwargs = {
+            "body": manifest,
+            "name": manifest["metadata"]["name"],
+            "content_type": "application/apply-patch+yaml",
+            "field_manager": FIELD_MANAGER,
+            "force_conflicts": True,
+        }
         if resource.namespaced:
             kwargs["namespace"] = namespace
         resource.patch(**kwargs)
@@ -144,7 +143,7 @@ class K8s:
         namespace: str,
         name: str,
         data: dict[str, str],
-        labels: Optional[dict] = None,
+        labels: dict | None = None,
     ) -> None:
         metadata: dict = {"name": name}
         if labels:
@@ -182,7 +181,7 @@ class K8s:
             namespace=target_ns,
         )
 
-    def read_secret(self, namespace: str, name: str) -> Optional[dict]:
+    def read_secret(self, namespace: str, name: str) -> dict | None:
         import base64
 
         try:
@@ -320,7 +319,7 @@ class K8s:
         ]
         if not ready:
             raise RuntimeError(f"no ready pod for {namespace}/{deployment}")
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         for _ in range(retries):
             try:
                 return stream(

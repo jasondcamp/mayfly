@@ -29,7 +29,7 @@ def test_all_pods_disable_service_links():
 
 
 def test_default_images_are_digest_pinned():
-    for kind, info in EMULATORS.items():
+    for kind in EMULATORS:
         ref = resolve_image(EmulatorSpec(kind=kind))
         assert "@sha256:" in ref, f"{kind} default not digest-pinned: {ref}"
         assert ":latest" not in ref

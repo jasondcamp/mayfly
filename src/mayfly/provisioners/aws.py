@@ -3,7 +3,6 @@
 import re
 import secrets as _pysecrets
 import time
-from typing import Optional
 
 from botocore.exceptions import ClientError
 
@@ -265,7 +264,7 @@ class DynamoProvisioner:
                     BillingMode="PAY_PER_REQUEST",
                 )
 
-            def status():
+            def status(table=table):
                 return ddb.describe_table(TableName=table.name)["Table"]["TableStatus"]
 
             _wait(f"dynamodb/{table.name}", 60, status, "ACTIVE", ctx.progress)
@@ -297,7 +296,7 @@ class RdsProvisioner:
                     AllocatedStorage=20,
                 )
 
-            def status():
+            def status(db=db):
                 instances = self._instances(rds, db.name)
                 return instances[0]["DBInstanceStatus"] if instances else None
 
@@ -350,7 +349,7 @@ class ElastiCacheProvisioner:
                     NumCacheNodes=1,
                 )
 
-            def status():
+            def status(cache=cache):
                 clusters = self._clusters(ec, cache.name)
                 return clusters[0]["CacheClusterStatus"] if clusters else None
 
@@ -420,7 +419,7 @@ class MskHybridProvisioner:
                     },
                 )["ClusterArn"]
 
-            def state():
+            def state(arn=arn):
                 return kafka.describe_cluster(ClusterArn=arn)["ClusterInfo"]["State"]
 
             _wait(f"msk/{cluster.name} control plane", 120, state, "ACTIVE", ctx.progress)
@@ -453,7 +452,7 @@ class MskProvisioner:
                     },
                 )["ClusterArn"]
 
-            def state():
+            def state(arn=arn):
                 return kafka.describe_cluster(ClusterArn=arn)["ClusterInfo"]["State"]
 
             _wait(f"msk/{cluster.name}", 480, state, "ACTIVE", ctx.progress)
@@ -463,7 +462,7 @@ class MskProvisioner:
         return secrets
 
     @staticmethod
-    def _find_arn(kafka, name: str) -> Optional[str]:
+    def _find_arn(kafka, name: str) -> str | None:
         clusters = kafka.list_clusters(ClusterNameFilter=name).get("ClusterInfoList", [])
         for c in clusters:
             if c.get("ClusterName") == name:

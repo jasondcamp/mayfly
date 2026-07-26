@@ -16,7 +16,7 @@ sidebar_position: 2
   ```
 
 - `kubectl` on PATH (mayfly uses it for port-forwarding).
-- Python 3.9+.
+- Python 3.10+.
 
 ## Install
 

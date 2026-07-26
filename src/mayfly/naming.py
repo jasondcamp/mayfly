@@ -6,7 +6,6 @@ refusing a namespace whose recorded seed label differs from the spec's.
 """
 
 import hashlib
-from typing import Optional
 
 ADJECTIVES = [
     "obvious", "frustrated", "wobbly", "gentle", "rapid", "blonde", "sleepy", "brave",
@@ -33,7 +32,7 @@ def env_name(seed: str) -> str:
     return f"{ADJECTIVES[a1]}-{ADJECTIVES[a2]}-{ANIMALS[an]}"
 
 
-def namespace_for(seed: str, prefix: Optional[str] = None) -> str:
+def namespace_for(seed: str, prefix: str | None = None) -> str:
     """Namespace for a seed: `<prefix>-<name>` with a prefix, bare name without."""
     name = env_name(seed)
     return f"{prefix}-{name}" if prefix else name

@@ -185,8 +185,9 @@ def test_init_apps_spec():
 
 # ---------------------------------------------------------------- overrides
 def _raw_example():
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     return yaml.safe_load(Path("examples/env.yaml").read_text())
 
@@ -262,8 +263,10 @@ def test_ingress_domain_invalid():
 
     from mayfly.spec import EnvSpec
 
+    from pydantic import ValidationError
+
     for bad in ("Envs.Example.Com", "envs..example.com", "-bad.example.com", ""):
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             EnvSpec.model_validate({"seed": "x", "ingressDomain": bad})
 
 
