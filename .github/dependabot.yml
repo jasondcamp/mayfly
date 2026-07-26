@@ -1,0 +1,19 @@
+# Dependabot keeps retrying security updates that cannot succeed and the
+# runs land as failures. The npm advisories below have NO patched version
+# that fits the Docusaurus dependency tree ("No fix available" in npm
+# audit) — and docs/ is build-time tooling for a static site, so there is
+# no runtime exposure. Ignore them until a fix exists, then drop the entry
+# (a plain `npm audit fix` / Docusaurus bump picks it up).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/docs"
+    schedule:
+      interval: "weekly"
+    # 0 = no scheduled version-update PRs; ignore rules below also apply
+    # to security updates, which is the part we're silencing.
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "brace-expansion"   # GHSA-mh99-v99m-4gvg, no fix
+      - dependency-name: "serialize-javascript"
+      - dependency-name: "uuid"
