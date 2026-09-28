@@ -1,0 +1,86 @@
+# Example mayfly environment spec: Azure services.
+# Needs the Azure SDK extra: pip install 'mayfly-cli[azure]'
+apiVersion: mayfly/v1alpha1
+seed: azure-example-1
+ttl: 24h
+
+# The cloud emulators deployed inside the environment's namespace. Explicit:
+# every Azure service class below needs emulators.azure, even the database
+# classes that run as native engine pods. No AWS services here, so no aws
+# emulator deploys.
+emulators:
+  azure:
+    kind: floci-az       # the only Azure kind today; digest-pinned
+    # version: 1.2.3     # pinned tag; never 'latest'
+    expose: false        # laptop convenience: Azure API at az.<namespace>.localtest.me
+                         # (default false — the API is unauthenticated; keep it
+                         # unexposed on shared clusters)
+
+services:
+  # Key Vault — in-process in the emulator. Seeded secrets follow the same
+  # rules as secretsmanager: set exactly one of value: or generate:.
+  keyvault:
+    - name: app-secrets
+      secrets:
+        - name: api-key
+          value: "test-key-123"   # literal fixture (test data, not prod creds)
+        - name: signing-key
+          generate: true          # random per environment; kept across re-ups
+
+  # Service Bus — one entry per namespace, with queues and topics (each topic
+  # with its subscriptions). Emulator-backed with a real AMQP data plane on
+  # azure:5673.
+  servicebus:
+    - name: main
+      queues: [jobs, emails]
+      topics:
+        - name: events
+          subscriptions: [worker, audit]
+
+  # Azure Database for PostgreSQL (Flexible Server). backend auto resolves to
+  # native: a real postgres pod. The Secret keys are identical to rds-*
+  # postgres, so an app moves between AWS RDS and Flexible Server with zero
+  # env changes.
+  postgresflexible:
+    - name: appdb
+      dbName: app
+      version: "16"               # pg major -> container image tag
+
+  # Azure SQL — backend auto resolves to native: a real SQL Server pod.
+  # Same DB_* key names, mssql:// scheme, port 1433.
+  azuresql:
+    - name: coredb
+      dbName: app
+
+initApps:
+  db-init:
+    image: postgres:16-alpine
+    command:
+      - psql
+      - postgresql://app:apppass@pgflex-appdb:5432/app   # cluster-internal, always
+      - -c
+      - >-
+        CREATE TABLE IF NOT EXISTS environment_info (key text PRIMARY KEY, value text);
+        INSERT INTO environment_info VALUES ('initialized_by', 'mayfly initApps')
+        ON CONFLICT (key) DO NOTHING;
+
+apps:
+  # dragonfly round-trips every Azure service too (Key Vault reads, Service
+  # Bus send/receive, insert+select on both databases) via the
+  # MAYFLY_AZURE_CHECKS env mayfly injects — zero configuration.
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, periodSeconds: 10, timeoutSeconds: 30}
+    resources: {memory: 64Mi, memoryLimit: 256Mi}
+    ingress: {}
+
+  api:
+    image: myorg/api:1.2.3
+    port: 8080
+    secrets:
+      - keyvault-app-secrets                     # KEYVAULT_URL + SECRET_* values
+      - servicebus-main                          # SERVICEBUS_CONNECTION_STRING, ...
+      - pgflex-appdb                             # DATABASE_URL, DB_* (postgres)
+      - {name: azuresql-coredb, prefix: MSSQL_}  # prefix avoids DB_* collision
+    readiness: {path: /healthz}

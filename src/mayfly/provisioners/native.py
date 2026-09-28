@@ -15,9 +15,14 @@ CACHE_IMAGES = {
     "memcached": ("memcached:{v}-alpine", None),  # no cli; tcp probe
 }
 REDPANDA_IMAGE = "redpandadata/redpanda:v24.2.18"
+# Azure SQL native backend: a real SQL Server engine. amd64-only upstream —
+# runs under emulation on Apple Silicon k3d (slow start; generous probes).
+MSSQL_IMAGE = "mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04"
 
 DB_USER = "app"
 DB_PASSWORD = "apppass"  # POC parity; per-env generated credentials are planned
+MSSQL_USER = "sa"
+MSSQL_PASSWORD = "MayflyPass123!"  # SQL Server enforces password complexity
 
 
 def _deployment(name: str, container: dict) -> dict:
@@ -161,6 +166,121 @@ class ElastiCacheNativeProvisioner:
                     "REDIS_HOST": svc,
                     "REDIS_PORT": str(port),
                 }
+        return secrets
+
+
+class PostgresFlexibleNativeProvisioner:
+    """Azure Database for PostgreSQL (Flexible Server): from an app's point
+    of view it's postgres with a connection string, so the native backend is
+    a real postgres pod and the Secret keys are identical to rds-* postgres."""
+
+    def provision(self, items, ctx) -> dict:
+        secrets = {}
+        port = 5432
+        for db in items:
+            svc = f"pgflex-{db.name}"
+            container = {
+                "name": "postgres",
+                "image": f"postgres:{db.resolved_version}-alpine",
+                "ports": [{"containerPort": port}],
+                "env": _env(
+                    {
+                        "POSTGRES_USER": DB_USER,
+                        "POSTGRES_PASSWORD": DB_PASSWORD,
+                        "POSTGRES_DB": db.db_name,
+                    }
+                ),
+                "readinessProbe": {
+                    "exec": {"command": ["pg_isready", "-U", DB_USER, "-d", db.db_name]},
+                    "initialDelaySeconds": 2,
+                    "periodSeconds": 2,
+                },
+                "resources": {
+                    "requests": {"cpu": "50m", "memory": "128Mi"},
+                    "limits": {"memory": "512Mi"},
+                },
+            }
+            ctx.progress(f"postgresflexible: {db.name} deploying (postgres {db.resolved_version})")
+            ctx.k8s.apply_all([_deployment(svc, container), _service(svc, port)], ctx.namespace)
+            ctx.k8s.wait_deployment(ctx.namespace, svc, timeout=300)
+            ctx.progress(f"postgresflexible: {db.name} available at {svc}:{port}")
+            secrets[svc] = {
+                "DATABASE_URL": f"postgresql://{DB_USER}:{DB_PASSWORD}@{svc}:{port}/{db.db_name}",
+                "DB_HOST": svc,
+                "DB_PORT": str(port),
+                "DB_USER": DB_USER,
+                "DB_PASSWORD": DB_PASSWORD,
+                "DB_NAME": db.db_name,
+            }
+        return secrets
+
+
+_SQLCMD = "/opt/mssql-tools18/bin/sqlcmd"
+
+
+class AzureSqlNativeProvisioner:
+    """Azure SQL: a real SQL Server pod. Same DB_* key names as rds-* with
+    an mssql:// scheme; credentials are sa + a complexity-passing password
+    (SQL Server rejects the app/apppass convention)."""
+
+    def provision(self, items, ctx) -> dict:
+        secrets = {}
+        port = 1433
+        for db in items:
+            svc = f"azuresql-{db.name}"
+            container = {
+                "name": "mssql",
+                "image": MSSQL_IMAGE,
+                "ports": [{"containerPort": port}],
+                "env": _env(
+                    {
+                        "ACCEPT_EULA": "Y",
+                        "MSSQL_SA_PASSWORD": MSSQL_PASSWORD,
+                        "MSSQL_PID": "Developer",
+                    }
+                ),
+                # sqlcmd (tools18 needs -C to trust the self-signed cert):
+                # ready only once the engine accepts logins, which is what
+                # the CREATE DATABASE exec below depends on
+                "readinessProbe": {
+                    "exec": {
+                        "command": [
+                            _SQLCMD, "-S", "localhost",
+                            "-U", MSSQL_USER, "-P", MSSQL_PASSWORD,
+                            "-C", "-Q", "SELECT 1",
+                        ]
+                    },
+                    "initialDelaySeconds": 10,
+                    "periodSeconds": 5,
+                    "timeoutSeconds": 10,
+                },
+                "resources": {
+                    # SQL Server refuses to start under ~2GB
+                    "requests": {"cpu": "250m", "memory": "1Gi"},
+                    "limits": {"memory": "2Gi"},
+                },
+            }
+            ctx.progress(f"azuresql: {db.name} deploying (SQL Server)")
+            ctx.k8s.apply_all([_deployment(svc, container), _service(svc, port)], ctx.namespace)
+            ctx.k8s.wait_deployment(ctx.namespace, svc, timeout=600)
+            ctx.progress(f"azuresql: {db.name} creating database {db.db_name}")
+            ctx.k8s.exec_in_deployment(
+                ctx.namespace, svc,
+                [
+                    _SQLCMD, "-S", "localhost",
+                    "-U", MSSQL_USER, "-P", MSSQL_PASSWORD, "-C",
+                    "-Q", f"IF DB_ID('{db.db_name}') IS NULL CREATE DATABASE [{db.db_name}]",
+                ],
+            )
+            ctx.progress(f"azuresql: {db.name} available at {svc}:{port}")
+            secrets[svc] = {
+                "DATABASE_URL": f"mssql://{MSSQL_USER}:{MSSQL_PASSWORD}@{svc}:{port}/{db.db_name}",
+                "DB_HOST": svc,
+                "DB_PORT": str(port),
+                "DB_USER": MSSQL_USER,
+                "DB_PASSWORD": MSSQL_PASSWORD,
+                "DB_NAME": db.db_name,
+            }
         return secrets
 
 

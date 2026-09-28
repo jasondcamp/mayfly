@@ -60,6 +60,16 @@ echo "== dragonfly: secret-driven connectivity report"
 "${K[@]}" run smoke-dragonfly-hz --rm -i --restart=Never --image=busybox:1.36 \
   --command -- sh -c 'wget -qO- http://dragonfly:8080/healthz && echo " (healthz 200)"'
 
+echo "== helm: podinfo chart rendered + applied, values wired from a mayfly secret"
+"${K[@]}" rollout status deploy/podinfo --timeout=120s
+"${K[@]}" run smoke-podinfo --rm -i --restart=Never --image=busybox:1.36 \
+  --command -- sh -c 'wget -qO- http://podinfo:9898/healthz && echo " (podinfo healthz)"'
+API_KEY=$(secret sm-app-api-key SECRET_VALUE)
+PODINFO_ENV=$("${K[@]}" run smoke-podinfo-msg --rm -i --restart=Never --image=busybox:1.36 \
+  --command -- wget -qO- http://podinfo:9898/env)
+echo "$PODINFO_ENV" | grep -q "$API_KEY"
+echo "podinfo ui.message carries the interpolated secret value"
+
 echo "== caddis: full-stack upload pipeline (s3+pg+kafka+redis+secrets in one call)"
 "${K[@]}" run smoke-caddis --rm -i --restart=Never --image=curlimages/curl:8.10.1 \
   --command -- sh -c '

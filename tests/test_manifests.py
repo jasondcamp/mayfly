@@ -8,7 +8,10 @@ from mayfly.emulators import (
     resolve_image,
 )
 from mayfly.manifests import app_manifests
-from mayfly.spec import AppSpec, EmulatorSpec
+from mayfly.spec import AppSpec, AwsEmulatorSpec
+
+# every service class needs its cloud emulator declared
+SPEC_EMULATORS = {"aws": {"kind": "ministack"}}
 
 
 def _pod_specs(manifests):
@@ -19,8 +22,8 @@ def test_all_pods_disable_service_links():
     # The aws Service otherwise injects *_PORT=tcp://... into sibling pods,
     # which Quarkus-based emulators fatally misparse.
     manifests = (
-        emulator_manifests(EmulatorSpec(kind="ministack"), "env-x")
-        + emulator_manifests(EmulatorSpec(kind="floci"), "env-x")
+        emulator_manifests(AwsEmulatorSpec(kind="ministack"), "env-x")
+        + emulator_manifests(AwsEmulatorSpec(kind="floci"), "env-x")
         + app_manifests("echo", AppSpec(image="e:1"), "env-x")
     )
     pods = _pod_specs(manifests)
@@ -30,19 +33,19 @@ def test_all_pods_disable_service_links():
 
 def test_default_images_are_digest_pinned():
     for kind in EMULATORS:
-        ref = resolve_image(EmulatorSpec(kind=kind))
+        ref = resolve_image(AwsEmulatorSpec(kind=kind))
         assert "@sha256:" in ref, f"{kind} default not digest-pinned: {ref}"
         assert ":latest" not in ref
     assert "@sha256:" in KUBEDOCK_IMAGE
 
 
 def test_version_override_drops_digest():
-    ref = resolve_image(EmulatorSpec(kind="ministack", version="9.9.9"))
+    ref = resolve_image(AwsEmulatorSpec(kind="ministack", version="9.9.9"))
     assert ref == "ministackorg/ministack:9.9.9"
 
 
 def test_ministack_colocates_kubedock():
-    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y")
+    manifests = emulator_manifests(AwsEmulatorSpec(kind="ministack"), "env-y")
     (pod,) = _pod_specs(manifests)
     names = {c["name"] for c in pod["containers"]}
     assert names == {"kubedock", "ministack"}
@@ -62,24 +65,24 @@ def test_ministack_msk_bootstrap_env():
     from mayfly.spec import EnvSpec
 
     spec = EnvSpec.model_validate(
-        {"seed": "x", "services": {"msk": [{"name": "events"}, {"name": "logs"}]}}
+        {"seed": "x", "emulators": SPEC_EMULATORS, "services": {"msk": [{"name": "events"}, {"name": "logs"}]}}
     )
     bootstrap = msk_bootstrap(spec)
     assert bootstrap == "msk-events:9092,msk-logs:9092"
-    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y", bootstrap)
+    manifests = emulator_manifests(AwsEmulatorSpec(kind="ministack"), "env-y", bootstrap)
     (pod,) = _pod_specs(manifests)
     ministack = next(c for c in pod["containers"] if c["name"] == "ministack")
     env = {e["name"]: e["value"] for e in ministack["env"]}
     assert env["MINISTACK_MSK_BOOTSTRAP"] == bootstrap
     # no msk in spec -> no env var
-    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y", None)
+    manifests = emulator_manifests(AwsEmulatorSpec(kind="ministack"), "env-y", None)
     (pod,) = _pod_specs(manifests)
     ministack = next(c for c in pod["containers"] if c["name"] == "ministack")
     assert "MINISTACK_MSK_BOOTSTRAP" not in {e["name"] for e in ministack["env"]}
 
 
 def test_ministack_service_exposes_rds_ports():
-    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y")
+    manifests = emulator_manifests(AwsEmulatorSpec(kind="ministack"), "env-y")
     svc = next(m for m in manifests if m["kind"] == "Service")
     ports = {p["port"] for p in svc["spec"]["ports"]}
     assert AWS_PORT in ports
@@ -87,7 +90,7 @@ def test_ministack_service_exposes_rds_ports():
 
 
 def test_floci_has_no_kubedock():
-    manifests = emulator_manifests(EmulatorSpec(kind="floci"), "env-z")
+    manifests = emulator_manifests(AwsEmulatorSpec(kind="floci"), "env-z")
     (pod,) = _pod_specs(manifests)
     assert [c["name"] for c in pod["containers"]] == ["floci"]
     svc = next(m for m in manifests if m["kind"] == "Service")
@@ -95,7 +98,7 @@ def test_floci_has_no_kubedock():
 
 
 def test_kubedock_rolebinding_namespaced_subject():
-    manifests = emulator_manifests(EmulatorSpec(kind="ministack"), "env-y")
+    manifests = emulator_manifests(AwsEmulatorSpec(kind="ministack"), "env-y")
     rb = next(m for m in manifests if m["kind"] == "RoleBinding")
     assert rb["subjects"][0]["namespace"] == "env-y"
 
@@ -328,9 +331,9 @@ def test_app_env_carries_identity_and_checks():
 
 def test_aws_api_ingress_opt_in():
     for kind in ("ministack", "floci"):
-        closed = emulator_manifests(EmulatorSpec(kind=kind), "env-q")
+        closed = emulator_manifests(AwsEmulatorSpec(kind=kind), "env-q")
         assert not any(m["kind"] == "Ingress" for m in closed)  # default OFF
-        opened = emulator_manifests(EmulatorSpec(kind=kind, expose=True), "env-q")
+        opened = emulator_manifests(AwsEmulatorSpec(kind=kind, expose=True), "env-q")
         ing = next(m for m in opened if m["kind"] == "Ingress")
         assert ing["spec"]["rules"][0]["host"] == "aws.env-q.localtest.me"
 

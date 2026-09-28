@@ -17,6 +17,8 @@ sidebar_position: 2
 
 - `kubectl` on PATH (mayfly uses it for port-forwarding).
 - Python 3.10+.
+- `helm` on PATH — optional, only if your spec uses
+  [`helmApps:`](./spec/helm.md).
 
 ## Install
 
@@ -96,8 +98,8 @@ simply linger until the next `reap` — it fails safe.
 
 ## Use the AWS CLI against your environment
 
-With `emulator: {expose: true}` in the spec (on by default in the example —
-see [the security note](spec/environment#laptop-access-to-the-aws-api)
+With `emulators: {aws: {kind: ministack, expose: true}}` in the spec (on by default in the example —
+see [the security note](spec/services/aws#laptop-access-to-the-aws-api)
 before using it on a shared cluster), the AWS API is at
 `aws.<namespace>.localtest.me`. Set up a profile once:
 

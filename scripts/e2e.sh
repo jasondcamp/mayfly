@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 CLUSTER=${1:-mayfly-e2e}
 SPEC=examples/env.yaml
 
-for bin in k3d kubectl uv; do
+for bin in k3d kubectl uv helm; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
 
@@ -25,6 +25,16 @@ k3d cluster create "$CLUSTER" \
   --kubeconfig-switch-context=false \
   --wait --timeout 180s
 KC=$(k3d kubeconfig write "$CLUSTER")
+
+# Dev overrides (OVERRIDES.md): locally built kubedock/ministack/floci/floci-az
+# images from overrides/, imported into the cluster and exported for mayfly.
+OVERRIDES_PLAN=$(./scripts/overrides.sh plan)  # fails the run on a bad override
+if [ -n "$OVERRIDES_PLAN" ]; then
+  echo "==> building dev overrides"
+  ./scripts/overrides.sh build --cluster "$CLUSTER" >/dev/null
+  # shellcheck disable=SC1091
+  source overrides/.env
+fi
 
 # Build the images locally under their published names and import them, so
 # e2e always tests the working tree (the cluster never needs to pull).

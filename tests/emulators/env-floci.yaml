@@ -1,0 +1,44 @@
+# Emulator conformance spec: floci (AWS).
+# floci serves only in-process AWS APIs (kubedock lacks the Docker volumes
+# API its container services need), so this spec proves both halves:
+# s3/dynamodb/secretsmanager through the emulator, and the automatic
+# native fallback for rds/elasticache/msk. Run via scripts/emulator-test.sh.
+apiVersion: mayfly/v1alpha1
+seed: emu-floci
+ttl: 2h
+
+emulators:
+  aws:
+    kind: floci
+
+services:
+  s3:
+    buckets: [assets]      # emulator (in-process)
+
+  dynamodb:
+    - name: sessions       # emulator (in-process)
+
+  secretsmanager:
+    - name: app/api-key    # emulator (in-process)
+      value: "test-key-123"
+
+  rds:
+    - name: appdb          # auto -> native on floci
+      engine: postgres
+      dbName: app
+
+  elasticache:
+    - name: cache-a        # auto -> native on floci
+
+  msk:
+    - name: events         # auto -> native on floci
+      topics: [orders]
+
+  # no alb: emulator-only, and floci has no ALB data plane
+
+apps:
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, periodSeconds: 10, timeoutSeconds: 30}
+    resources: {memory: 64Mi, memoryLimit: 256Mi}

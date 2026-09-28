@@ -17,6 +17,10 @@ ttl: 72h
 #                                   # ingress controller; PR URLs become
 #                                   # backend.pr-<name>.envs.example.com
 
+emulators:
+  aws:
+    kind: ministack
+
 services:
   s3:
     buckets: [uploads]

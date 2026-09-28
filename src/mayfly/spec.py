@@ -34,8 +34,10 @@ def _validate_dns_name(v: str) -> str:
     return v
 
 
-class EmulatorSpec(_StrictModel):
-    kind: Literal["ministack", "floci"] = "ministack"
+class AwsEmulatorSpec(_StrictModel):
+    """The AWS emulator (emulators.aws). Deployed only when declared."""
+
+    kind: Literal["ministack", "floci"]
     image: str | None = None  # default: pinned per kind (see emulators.EMULATORS)
     version: str | None = None  # image tag; default: pinned per kind
     # expose the (unauthenticated) AWS API at aws.<namespace>.localtest.me via
@@ -48,8 +50,46 @@ class EmulatorSpec(_StrictModel):
     @classmethod
     def _no_latest(cls, v: str | None) -> str | None:
         if v == "latest":
-            raise ValueError("emulator.version must be a pinned tag, not 'latest'")
+            raise ValueError("emulators.aws.version must be a pinned tag, not 'latest'")
         return v
+
+
+class AzureEmulatorSpec(_StrictModel):
+    """The Azure emulator (emulators.azure). Deployed only when declared."""
+
+    kind: Literal["floci-az"]
+    image: str | None = None  # default: pinned (see emulators.AZURE_EMULATORS)
+    version: str | None = None  # image tag; default: pinned
+    # expose the (unauthenticated) Azure API at az.<namespace>.<ingressDomain>
+    # via the cluster ingress. Default OFF: the API can mutate environment
+    # state and read Key Vault values — same rule as emulators.aws.expose.
+    expose: bool = False
+
+    @field_validator("version")
+    @classmethod
+    def _no_latest(cls, v: str | None) -> str | None:
+        if v == "latest":
+            raise ValueError("emulators.azure.version must be a pinned tag, not 'latest'")
+        return v
+
+
+class EmulatorsSpec(_StrictModel):
+    """Which cloud emulators the environment runs, keyed by cloud. Explicit:
+    only the clouds listed here deploy, and every service class requires its
+    cloud's emulator (see CLOUD_CLASSES)."""
+
+    aws: AwsEmulatorSpec | None = None
+    azure: AzureEmulatorSpec | None = None
+
+
+# The cloud each service class belongs to. Declaring any entry of a class
+# requires emulators.<cloud>, whether the entry runs on the emulator or
+# natively, so what deploys is always exactly what the spec says.
+CLOUD_CLASSES = {
+    "aws": ("s3", "rds", "elasticache", "msk", "dynamodb", "alb", "secretsmanager"),
+    "azure": ("keyvault", "servicebus", "postgresflexible", "azuresql"),
+}
+AZURE_CLASSES = frozenset(CLOUD_CLASSES["azure"])
 
 
 Backend = Literal["auto", "emulator", "native"]
@@ -139,6 +179,120 @@ class AlbSpec(_StrictModel):
     _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
 
 
+# Service Bus entity names (queues, topics, subscriptions): letters, digits,
+# and . - _ separators, starting and ending alphanumeric (Azure allows up to
+# 260 chars; subscriptions 50).
+_SB_ENTITY_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,258}[A-Za-z0-9])?$")
+
+
+def _validate_sb_entity(v: str) -> str:
+    if not _SB_ENTITY_RE.match(v):
+        raise ValueError(
+            f"{v!r} is not a valid Service Bus entity name "
+            "(alphanumerics with . - _ separators)"
+        )
+    return v
+
+
+class KeyVaultSecretSpec(_StrictModel):
+    name: str  # KV secret naming: letters, digits, hyphens
+    value: str | None = None  # literal fixture value (test data, not prod creds)
+    generate: bool = False  # random value per environment (kept across re-ups)
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        if not re.match(r"^[A-Za-z0-9-]{1,127}$", v):
+            raise ValueError(f"{v!r} is not a valid Key Vault secret name")
+        return v
+
+    @model_validator(mode="after")
+    def _value_xor_generate(self) -> "KeyVaultSecretSpec":
+        if bool(self.value) == self.generate:
+            raise ValueError(
+                f"keyvault secret {self.name!r}: set exactly one of value: or generate: true"
+            )
+        return self
+
+    @property
+    def env_key(self) -> str:
+        """api-key -> SECRET_API_KEY (the key in the mirrored k8s Secret)."""
+        return "SECRET_" + self.name.upper().replace("-", "_")
+
+
+class KeyVaultSpec(_StrictModel):
+    name: str  # vault name: 3-24 chars, starts with a letter (Azure rules)
+    secrets: list[KeyVaultSecretSpec] = Field(default_factory=list)
+    backend: Backend = "auto"  # emulator-only (in-process)
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        _validate_dns_name(v)
+        if not (3 <= len(v) <= 24) or not v[0].isalpha():
+            raise ValueError(
+                f"vault name {v!r} must be 3-24 chars and start with a letter"
+            )
+        return v
+
+
+class ServiceBusTopicSpec(_StrictModel):
+    name: str
+    subscriptions: list[str] = Field(default_factory=list)
+
+    _name = field_validator("name")(lambda cls, v: _validate_sb_entity(v))
+    _subs = field_validator("subscriptions")(
+        lambda cls, v: [_validate_sb_entity(s) for s in v]
+    )
+
+
+class ServiceBusSpec(_StrictModel):
+    name: str  # Service Bus namespace
+    queues: list[str] = Field(default_factory=list)
+    topics: list[ServiceBusTopicSpec] = Field(default_factory=list)
+    backend: Backend = "auto"  # emulator-only (AMQP data plane via kubedock)
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+    _queues = field_validator("queues")(
+        lambda cls, v: [_validate_sb_entity(q) for q in v]
+    )
+
+    @model_validator(mode="after")
+    def _needs_entities(self) -> "ServiceBusSpec":
+        if not self.queues and not self.topics:
+            raise ValueError(
+                f"servicebus {self.name!r}: declare at least one queue or topic"
+            )
+        return self
+
+
+class PostgresFlexibleSpec(_StrictModel):
+    """Azure Database for PostgreSQL (Flexible Server). backend auto resolves
+    to native (a real postgres pod); the Secret keys are identical to rds-*
+    postgres, so apps move between the two with zero env changes."""
+
+    name: str
+    db_name: str = Field(default="app", alias="dbName")
+    version: str | None = None  # pg major -> image tag; default 16
+    backend: Backend = "auto"
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+    @property
+    def resolved_version(self) -> str:
+        return self.version or "16"
+
+
+class AzureSqlSpec(_StrictModel):
+    """Azure SQL. backend auto resolves to native (a real SQL Server pod)."""
+
+    name: str
+    db_name: str = Field(default="app", alias="dbName")
+    backend: Backend = "auto"
+
+    _name = field_validator("name")(lambda cls, v: _validate_dns_name(v))
+
+
 class ServicesSpec(_StrictModel):
     s3: S3Spec = Field(default_factory=S3Spec)
     rds: list[RdsSpec] = Field(default_factory=list)
@@ -147,6 +301,16 @@ class ServicesSpec(_StrictModel):
     dynamodb: list[DynamoSpec] = Field(default_factory=list)
     alb: list[AlbSpec] = Field(default_factory=list)
     secretsmanager: list[SecretsManagerSpec] = Field(default_factory=list)
+    # Azure classes (see docs/docs/spec/services/azure.md)
+    keyvault: list[KeyVaultSpec] = Field(default_factory=list)
+    servicebus: list[ServiceBusSpec] = Field(default_factory=list)
+    postgresflexible: list[PostgresFlexibleSpec] = Field(default_factory=list)
+    azuresql: list[AzureSqlSpec] = Field(default_factory=list)
+
+
+def _declared(services: ServicesSpec, svc_class: str) -> bool:
+    items = getattr(services, svc_class)
+    return bool(items.buckets) if svc_class == "s3" else bool(items)
 
 
 class ResourcesSpec(_StrictModel):
@@ -244,6 +408,78 @@ class InitAppSpec(_StrictModel):
     patch: dict = Field(default_factory=dict)  # merged onto the generated Job
 
 
+_TCP_TARGET_RE = re.compile(r"^[a-z0-9.-]+:\d+$")
+_CHART_VERSION_RE = re.compile(r"^[0-9a-zA-Z][0-9a-zA-Z.+_-]*$")
+
+
+class HelmCheckSpec(_StrictModel):
+    """Optional dragonfly health check for a helm app. Joins the app checks
+    dragonfly runs (MAYFLY_APP_CHECKS) — same shape as readiness-derived
+    checks for regular apps."""
+
+    kind: Literal["tcp", "http"] = "http"
+    target: str  # tcp: "service:port"; http: cluster-internal URL
+
+    @model_validator(mode="after")
+    def _check_target(self) -> "HelmCheckSpec":
+        if self.kind == "http" and not self.target.startswith("http://"):
+            raise ValueError(
+                f"http check target {self.target!r} must be a cluster-internal "
+                "http:// URL (e.g. http://myapp:8080/healthz)"
+            )
+        if self.kind == "tcp" and not _TCP_TARGET_RE.match(self.target):
+            raise ValueError(
+                f"tcp check target {self.target!r} must be service:port"
+            )
+        return self
+
+
+class HelmAppSpec(_StrictModel):
+    """A Helm chart rendered client-side (``helm template``) and applied by
+    mayfly via server-side apply — no helm release exists; the namespace TTL
+    is the only lifecycle. String values may reference provisioned secret
+    data with ``${secret:<name>:<KEY>}``, resolved at ``up`` time."""
+
+    enabled: bool = True
+    chart: str  # chart name within the repo (the repo URL goes in `repo`)
+    repo: str  # HTTP(S) chart repository URL
+    version: str  # exact pinned chart version — no ranges, no latest
+    values: dict = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=300, alias="timeoutSeconds", ge=1)
+    check: HelmCheckSpec | None = None
+
+    @field_validator("chart")
+    @classmethod
+    def _check_chart(cls, v: str) -> str:
+        if not v or "/" in v or v != v.strip():
+            raise ValueError(
+                f"chart {v!r} must be a bare chart name (the repository URL "
+                "belongs in `repo`)"
+            )
+        return v
+
+    @field_validator("repo")
+    @classmethod
+    def _check_repo(cls, v: str) -> str:
+        if not re.match(r"^https?://", v):
+            raise ValueError(
+                f"helm repo {v!r} must be an http(s) URL (OCI and local "
+                "charts are not supported yet)"
+            )
+        return v
+
+    @field_validator("version")
+    @classmethod
+    def _check_version(cls, v: str) -> str:
+        if v == "latest":
+            raise ValueError("helm version must be a pinned version, not 'latest'")
+        if not _CHART_VERSION_RE.match(v):
+            raise ValueError(
+                f"helm version {v!r} must be an exact pin (no ranges: ^ ~ * < > = , |)"
+            )
+        return v
+
+
 class EnvSpec(_StrictModel):
     api_version: str = Field(default=API_VERSION, alias="apiVersion")
     seed: str
@@ -255,10 +491,11 @@ class EnvSpec(_StrictModel):
     ingress_domain: str = Field(default="localtest.me", alias="ingressDomain")
 
     ttl: str = DEFAULT_TTL
-    emulator: EmulatorSpec = Field(default_factory=EmulatorSpec)
+    emulators: EmulatorsSpec = Field(default_factory=EmulatorsSpec)
     services: ServicesSpec = Field(default_factory=ServicesSpec)
     init_apps: dict[str, InitAppSpec] = Field(default_factory=dict, alias="initApps")
     apps: dict[str, AppSpec] = Field(default_factory=dict)
+    helm_apps: dict[str, HelmAppSpec] = Field(default_factory=dict, alias="helmApps")
 
     @field_validator("api_version")
     @classmethod
@@ -312,6 +549,36 @@ class EnvSpec(_StrictModel):
         for name in v:
             _validate_dns_name(name)
         return v
+
+    @field_validator("helm_apps")
+    @classmethod
+    def _check_helm_app_names(cls, v: dict[str, HelmAppSpec]) -> dict[str, HelmAppSpec]:
+        for name in v:
+            _validate_dns_name(name)
+        return v
+
+    @model_validator(mode="after")
+    def _check_helm_name_collisions(self) -> "EnvSpec":
+        # the helm release name becomes rendered resource names; sharing a
+        # key with apps would collide with that app's Deployment/Service
+        for name in self.helm_apps:
+            if name in self.apps:
+                raise ValueError(f"helmApps {name!r} collides with an app of the same name")
+        return self
+
+    @model_validator(mode="after")
+    def _check_emulators_declared(self) -> "EnvSpec":
+        for cloud, classes in CLOUD_CLASSES.items():
+            if getattr(self.emulators, cloud) is not None:
+                continue
+            used = [c for c in classes if _declared(self.services, c)]
+            if used:
+                kinds = {"aws": "ministack | floci", "azure": "floci-az"}[cloud]
+                raise ValueError(
+                    f"services {', '.join(used)} need the {cloud} emulator: "
+                    f"declare emulators.{cloud} (kind: {kinds})"
+                )
+        return self
 
     @model_validator(mode="after")
     def _check_alb_targets(self) -> "EnvSpec":

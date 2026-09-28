@@ -1,0 +1,31 @@
+name: emulators
+
+# Emulator conformance tests — run on demand when changing an emulator pin,
+# a provisioner, or the manifests that shape the emulator pods:
+#   gh workflow run emulators                       # all three
+#   gh workflow run emulators -f emulator=floci-az  # just one
+on:
+  workflow_dispatch:
+    inputs:
+      emulator:
+        description: which emulator to test
+        type: choice
+        default: all
+        options: [all, ministack, floci, floci-az]
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    name: ${{ matrix.kind }}
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: ${{ inputs.emulator == 'all' && fromJSON('["ministack","floci","floci-az"]') || fromJSON(format('["{0}"]', inputs.emulator)) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: install k3d
+        run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - run: uv sync
+      - run: chmod +x scripts/emulator-test.sh tests/emulators/smoke-*.sh
+      - run: ./scripts/emulator-test.sh ${{ matrix.kind }} mayfly-ci-${{ matrix.kind }}
