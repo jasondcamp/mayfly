@@ -29,7 +29,9 @@ mayfly derives each app's check from the `readiness` block it already has
 (`hello` → `GET /healthz`, `pgbouncer` → TCP `:5432`) and hands the list to
 dragonfly via the injected `MAYFLY_APP_CHECKS` env var — an APPS card shows
 every app's live health (dragonfly skips checking itself). Apps without a
-`readiness` have no defined check, so no tile. Adding a service kind to mayfly means adding its
+`readiness` have no defined check, so no tile. Helm apps join the same card
+through their optional `check:` field (see the
+[helm spec](../spec/helm.md)). Adding a service kind to mayfly means adding its
 dragonfly check in the same change; that invariant is project policy.
 
 ## Interfaces

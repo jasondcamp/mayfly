@@ -2,15 +2,18 @@
 
 Discovers services the way a real AWS application would: by asking the AWS
 control plane. Using the AWS_ENDPOINT_URL/credentials mayfly injects into
-every app pod, it calls
+every app pod (when the spec declares an AWS emulator), it calls
 
   rds:         describe-db-instances
   elasticache: describe-cache-clusters
   kafka (msk): list-clusters + get-bootstrap-brokers
 
-then round-trips real data through every instance found. No configuration,
-no mounted secrets, no Kubernetes API access — declare a service in the
-mayfly spec and a tile appears.
+then round-trips real data through every instance found. Azure services
+arrive via MAYFLY_AZURE_CHECKS (spec-derived, injected by mayfly) and get
+the same treatment: Key Vault reads, Service Bus send/receive over AMQP,
+postgres/SQL Server insert+select. No configuration, no mounted secrets,
+no Kubernetes API access — declare a service in the mayfly spec and a tile
+appears.
 
 Serves:
   GET /         -> web interface: live per-instance tiles, refreshed every 5s
@@ -226,6 +229,156 @@ def check_secret(sm, name):
     return _check(run)
 
 
+def _azure_credential():
+    """Fake token credential for the emulator: the Key Vault SDK enforces a
+    challenge-based bearer-token flow even over plain HTTP."""
+    from azure.core.credentials import AccessToken
+
+    class _EmulatorCredential:
+        def get_token(self, *scopes, **kwargs):
+            return AccessToken("fake-token", int(time.time()) + 3600)
+
+        def get_token_info(self, *scopes, **kwargs):
+            return self.get_token(*scopes, **kwargs)
+
+    return _EmulatorCredential()
+
+
+def _azure_http_transport():
+    """The Key Vault SDK refuses bearer tokens over non-TLS URLs, so clients
+    target https:// and this transport downgrades to the emulator's http://
+    at send time."""
+    from azure.core.pipeline.transport import RequestsTransport
+
+    class _HttpDowngradeTransport(RequestsTransport):
+        def send(self, request, **kwargs):
+            original = request.url
+            request.url = original.replace("https://", "http://", 1)
+            try:
+                return super().send(request, **kwargs)
+            finally:
+                # restore: the pipeline re-sends this same request object on
+                # retry, and the auth policy refuses a non-https URL
+                request.url = original
+
+    return _HttpDowngradeTransport()
+
+
+def check_keyvault(chk):
+    def run():
+        from azure.keyvault.secrets import SecretClient
+
+        # chk["url"] is the cluster-internal http URL; hand the SDK the https
+        # form and let the transport downgrade it (see _azure_http_transport)
+        vault_url = chk["url"].replace("http://", "https://", 1)
+        client = SecretClient(
+            vault_url=vault_url,
+            credential=_azure_credential(),
+            verify_challenge_resource=False,
+            transport=_azure_http_transport(),
+        )
+        names = chk.get("secrets") or []
+        if names:
+            for name in names:
+                value = client.get_secret(name).value
+                assert value, f"secret {name} came back empty"
+            return f"read {len(names)} secret(s) ok ({chk['url']})"
+        token = str(uuid.uuid4())
+        client.set_secret("dragonfly-probe", token)
+        got = client.get_secret("dragonfly-probe").value
+        assert got == token, f"set/get mismatch: {got!r}"
+        return f"set/get round-trip ok ({chk['url']})"
+
+    return _check(run)
+
+
+def check_servicebus(chk):
+    def run():
+        from azure.servicebus import ServiceBusClient, ServiceBusMessage
+
+        # one long-lived AMQP connection per namespace, reused across sweeps:
+        # the data plane goes through kubedock's reverse proxy, which leaks
+        # an upstream socket per connection (see check_memcached)
+        ck = ("servicebus", chk["connection"])
+        client = _clients.get(ck)
+        if client is None:
+            client = _clients[ck] = ServiceBusClient.from_connection_string(chk["connection"])
+        token = str(uuid.uuid4())
+        try:
+            if chk.get("queues"):
+                entity = chk["queues"][0]
+                with client.get_queue_sender(entity) as sender:
+                    sender.send_messages(ServiceBusMessage(token))
+                with client.get_queue_receiver(entity, max_wait_time=5) as receiver:
+                    for msg in receiver:
+                        if str(msg) == token:
+                            receiver.complete_message(msg)
+                            return f"send/receive round-trip ok (queue {entity})"
+                        receiver.abandon_message(msg)  # someone else's message
+                raise AssertionError(f"sent to queue {entity} but received nothing back")
+            # Topic-only namespace: send, don't receive. The Python SDK
+            # addresses subscriptions by full URI
+            # (amqps://host/<topic>/Subscriptions/<sub>), which floci-az
+            # 0.13.0's AmqpEntityAddress doesn't reduce -> AMQ119010
+            # not-found. Restore the subscription receive once floci-az
+            # ships the fix.
+            topic = chk["topics"][0]
+            with client.get_topic_sender(topic["name"]) as sender:
+                sender.send_messages(ServiceBusMessage(token))
+            return (
+                f"send ok (topic {topic['name']}; subscription receive pending "
+                "a floci-az fix)"
+            )
+        except Exception:
+            _clients.pop(ck, None)  # reconnect fresh next sweep
+            try:
+                client.close()
+            except Exception:
+                pass
+            raise
+
+    return _check(run)
+
+
+def check_pgflex(chk):
+    # Postgres Flexible Server is postgres with a connection string: reuse
+    # the RDS probe via its instance-dict shape (password: DB_PASSWORD env)
+    return check_postgres(
+        {
+            "Endpoint": {"Address": chk["host"], "Port": int(chk["port"])},
+            "MasterUsername": chk.get("user", "app"),
+            "DBName": chk.get("db", "app"),
+        }
+    )
+
+
+def check_azuresql(chk):
+    def run():
+        import pytds
+
+        token = str(uuid.uuid4())
+        with pytds.connect(
+            dsn=chk["host"],
+            port=int(chk["port"]),
+            database=chk["db"],
+            user=chk["user"],
+            password=chk["password"],
+            login_timeout=5,
+        ) as con, con.cursor() as cur:
+            cur.execute(
+                "IF OBJECT_ID('dragonfly') IS NULL "
+                "CREATE TABLE dragonfly (token varchar(64), at datetime2 DEFAULT sysdatetime())"
+            )
+            cur.execute("INSERT INTO dragonfly (token) VALUES (%s)", (token,))
+            cur.execute("SELECT count(*) FROM dragonfly WHERE token = %s", (token,))
+            (count,) = cur.fetchone()
+            assert count == 1, f"inserted row not found (token {token})"
+            con.commit()
+            return f"insert/select round-trip ok via {chk['host']}:{chk['port']}"
+
+    return _check(run)
+
+
 def check_app(chk):
     def run():
         if chk["kind"] == "tcp":
@@ -353,14 +506,40 @@ def run_all():
             r["status"] = lb.get("State", {}).get("Code", "unknown").lower()
             report[lb["LoadBalancerName"]] = r
 
+    def azure():
+        # Azure checks are spec-driven (mayfly injects MAYFLY_AZURE_CHECKS):
+        # floci-az's ARM listing support is unverified, and the native
+        # database classes are invisible to any control plane.
+        raw = os.environ.get("MAYFLY_AZURE_CHECKS")
+        if not raw:
+            return
+        checkers = {
+            "keyvault": check_keyvault,
+            "servicebus": check_servicebus,
+            "pgflex": check_pgflex,
+            "azuresql": check_azuresql,
+        }
+        for chk in json.loads(raw):
+            checker = checkers.get(chk["kind"])
+            if checker is None:
+                continue  # newer mayfly than dragonfly; skip unknown kinds
+            r = checker(chk)
+            r["kind"] = chk["kind"]
+            r["status"] = "available"
+            report[chk["name"]] = r
+
     _try("app", apps)
-    _try("rds", rds)
-    _try("elasticache", elasticache)
-    _try("msk", msk)
-    _try("dynamodb", dynamodb)
-    _try("s3", s3)
-    _try("secretsmanager", secretsmanager)
-    _try("alb", alb)
+    # mayfly injects AWS_ENDPOINT_URL only when the spec declares an AWS
+    # emulator; without one there is no control plane to discover from
+    if os.environ.get("AWS_ENDPOINT_URL"):
+        _try("rds", rds)
+        _try("elasticache", elasticache)
+        _try("msk", msk)
+        _try("dynamodb", dynamodb)
+        _try("s3", s3)
+        _try("secretsmanager", secretsmanager)
+        _try("alb", alb)
+    _try("azure", azure)
     return report
 
 
@@ -385,6 +564,27 @@ def cached_report():
     with _cache_lock:
         _cache.update(at=time.monotonic(), report=report)
     return report
+
+
+# Which cloud each check kind belongs to, and how dragonfly finds those
+# services: AWS through its control plane, Azure from mayfly's spec-derived
+# MAYFLY_AZURE_CHECKS. A new cloud is one more entry.
+CLOUDS = (
+    ("AWS", frozenset({"rds", "elasticache", "msk", "dynamodb", "s3", "secretsmanager", "alb"}),
+     "discovered via the AWS control plane"),
+    ("Azure", frozenset({"keyvault", "servicebus", "pgflex", "azuresql"}),
+     "from the environment spec"),
+)
+
+
+def describe_sources(report):
+    """One line for the dashboard: which clouds' services this report
+    covers and how each was found."""
+    kinds = {c.get("kind") for c in report.values()}
+    parts = [f"{name} services {how}" for name, members, how in CLOUDS if kinds & members]
+    if not parts:
+        return "Services verified live."
+    return " and ".join(parts) + ", verified live."
 
 
 def healthy(report):
@@ -444,15 +644,20 @@ PAGE = """<!doctype html>
 </style></head>
 <body>
 <header><h1>dragon<span class="fly">fly</span></h1><span id="overall"></span></header>
-<div class="sub">Services discovered via the AWS control plane, verified live.</div>
+<div class="sub" id="sources">Verifying services…</div>
 <div class="tiles" id="tiles"></div>
 <footer>Auto-refreshes every 5s · <a href="/api">JSON</a> · <span id="stamp"></span></footer>
 <script>
-const ORDER = ["app", "alb", "rds", "elasticache", "msk", "dynamodb", "s3", "secretsmanager"];
+const ORDER = ["app", "alb", "rds", "elasticache", "msk", "dynamodb", "s3", "secretsmanager",
+               "keyvault", "servicebus", "pgflex", "azuresql"];
 const TITLES = { rds: ["RDS", "postgres"], elasticache: ["ELASTICACHE", "redis"],
                  msk: ["MSK", "kafka"], dynamodb: ["DYNAMODB", "dynamo"],
                  s3: ["S3", "buckets"], alb: ["ALB", "elbv2"],
                  secretsmanager: ["SECRETS MANAGER", "secretsmanager"],
+                 keyvault: ["KEY VAULT", "azure"],
+                 servicebus: ["SERVICE BUS", "azure amqp"],
+                 pgflex: ["POSTGRES FLEXIBLE", "azure postgres"],
+                 azuresql: ["AZURE SQL", "sql server"],
                  app: ["APPS", "env.yaml readiness"] };
 const SLOW_MS = 1000;
 function row(label, c) {
@@ -487,7 +692,8 @@ async function refresh() {
                    ...Object.keys(groups).filter(k => !ORDER.includes(k))];
     document.getElementById("tiles").innerHTML = entries.length
       ? kinds.map(k => card(k, groups[k])).join("")
-      : '<div class="empty">No services discovered via the AWS control plane.</div>';
+      : '<div class="empty">No services found in this environment.</div>';
+    document.getElementById("sources").textContent = data.sources;
     const el = document.getElementById("overall");
     el.textContent = data.healthy ? "\\u2713 all connected" : "\\u2717 attention needed";
     el.style.color = data.healthy ? "var(--good)" : "var(--critical)";
@@ -526,7 +732,11 @@ class Handler(BaseHTTPRequestHandler):
             else:  # /api (and anything else): JSON report
                 code = 200
                 body = (
-                    json.dumps({"healthy": healthy(report), "checks": report}, indent=2).encode()
+                    json.dumps(
+                        {"healthy": healthy(report), "sources": describe_sources(report),
+                         "checks": report},
+                        indent=2,
+                    ).encode()
                     + b"\n"
                 )
                 ctype = "application/json"

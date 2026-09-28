@@ -9,7 +9,18 @@ const sidebars = {
       type: 'category',
       label: 'Spec reference',
       collapsed: false,
-      items: ['spec/environment', 'spec/services', 'spec/apps'],
+      items: [
+        'spec/environment',
+        {
+          type: 'category',
+          label: 'Services',
+          collapsed: false,
+          link: {type: 'doc', id: 'spec/services/index'},
+          items: ['spec/services/aws', 'spec/services/azure'],
+        },
+        'spec/apps',
+        'spec/helm',
+      ],
     },
     {
       type: 'category',

@@ -1,0 +1,46 @@
+# Helm-chart apps: a chart is rendered client-side (`helm template`, exact
+# version pin) with values mayfly generates from this spec, then applied
+# through mayfly's own pipeline (namespace forced, pod invariants enforced,
+# server-side apply). No helm release object exists — the environment's
+# namespace TTL is the only lifecycle, and `mayfly down` removes everything.
+#
+#   mayfly up examples/env-helm.yaml       # needs `helm` on PATH
+#   open http://dragonfly.<namespace>.localtest.me/
+#
+# ${secret:<name>:<KEY>} placeholders in values resolve at `up` time from
+# the just-provisioned service secrets (unknown names/keys fail hard).
+# `mayfly render` shows the rendered chart with placeholders left verbatim.
+# Note: re-ups re-render and re-apply, but objects a new chart version no
+# longer renders are not pruned (same as apps) — they die with the namespace.
+apiVersion: mayfly/v1alpha1
+seed: helm-1
+ttl: 4h
+
+emulators:
+  aws:
+    kind: ministack
+
+services:
+  secretsmanager:
+    - name: app/api-key
+      value: "test-key-123"    # mirrored to k8s Secret sm-app-api-key
+
+helmApps:
+  podinfo:
+    chart: podinfo                                  # bare chart name; repo below
+    repo: https://stefanprodan.github.io/podinfo
+    version: 6.9.1                                  # exact pin — no ranges, no latest
+    timeoutSeconds: 300        # total rollout budget for the chart's Deployments
+    values:
+      replicaCount: 1
+      ui:
+        message: "api key is ${secret:sm-app-api-key:SECRET_VALUE}"
+    # optional dragonfly health check (APPS card), like apps' readiness checks
+    check: {kind: http, target: "http://podinfo:9898/healthz"}
+
+apps:
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, timeoutSeconds: 30}
+    ingress: {}

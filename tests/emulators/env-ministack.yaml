@@ -1,0 +1,50 @@
+# Emulator conformance spec: ministack.
+# Exercises every service class ministack backs through the real AWS API
+# (kubedock container path included). Run via scripts/emulator-test.sh —
+# it overrides the app images below with working-tree builds.
+apiVersion: mayfly/v1alpha1
+seed: emu-ministack
+ttl: 2h
+
+emulators:
+  aws:
+    kind: ministack
+
+services:
+  s3:
+    buckets: [assets]
+
+  rds:
+    - name: appdb          # kubedock-spawned postgres via create-db-instance
+      engine: postgres
+      dbName: app
+
+  elasticache:
+    - name: cache-a        # kubedock-spawned redis via create-cache-cluster
+
+  msk:
+    - name: events         # hybrid: native broker + control-plane registration
+      topics: [orders]
+
+  dynamodb:
+    - name: sessions       # in-process
+
+  secretsmanager:
+    - name: app/api-key    # in-process
+      value: "test-key-123"
+
+  alb:
+    - name: hello-alb      # emulated data plane (ministack >= 1.4.4)
+      targetApp: hello
+
+apps:
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, periodSeconds: 10, timeoutSeconds: 30}
+    resources: {memory: 64Mi, memoryLimit: 256Mi}
+
+  hello:
+    image: ghcr.io/jasondcamp/mayfly-hello:0.1.3
+    port: 8080
+    readiness: {path: /healthz}

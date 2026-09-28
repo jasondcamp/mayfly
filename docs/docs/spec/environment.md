@@ -14,7 +14,7 @@ seed: pr-1234                 # environment identity
 namespacePrefix: env          # optional; namespace = <prefix>-<name>, else <name>
 ttl: 8h                       # 30m / 8h / 2d — reaped after this
 
-emulator: {...}
+emulators: {...}              # which cloud emulators deploy (explicit)
 services: {...}
 apps: {...}
 ```
@@ -44,8 +44,8 @@ ingressDomain: envs.example.com   # default: localtest.me
 
 The domain generated ingress hosts live under: apps with `ingress: {}` get
 `<app>.<namespace>.<ingressDomain>`, exposed ALBs get
-`<alb>.<namespace>.<ingressDomain>`, and `emulator.expose` publishes the
-AWS API at `aws.<namespace>.<ingressDomain>`.
+`<alb>.<namespace>.<ingressDomain>`, and [`emulators.aws.expose`](services/aws.md#laptop-access-to-the-aws-api)
+publishes the AWS API at `aws.<namespace>.<ingressDomain>`.
 
 The default, `localtest.me`, resolves to `127.0.0.1` — perfect for laptop
 clusters. On a real cluster, point a wildcard DNS record
@@ -65,49 +65,26 @@ Every environment carries a `mayfly.dev/expires-at` annotation
 terminate in the background; they show `TERMINATING` in `mayfly list` until
 gone). `mayfly extend --ttl 4h` pushes expiry out from now.
 
-## emulator
+## emulators
+
+Names exactly which cloud emulators the environment runs, keyed by cloud.
+Nothing is inferred: only the clouds listed here deploy, and a spec that
+declares a service class without its cloud's emulator
+[fails validation](services/index.md#emulators).
 
 ```yaml
-emulator:
-  kind: ministack             # ministack | floci (default: ministack)
-  # image: my-registry/ministack   # optional override (self-hosted mirror etc.)
-  # version: "1.4.4"               # image tag; 'latest' is rejected
-  expose: false               # opt-in: AWS API at aws.<namespace>.<ingressDomain>
+emulators:
+  aws:
+    kind: ministack    # ministack | floci
+  azure:
+    kind: floci-az     # floci-az
 ```
 
-### Laptop access to the AWS API
+`kind` is required. Each entry also takes `image` / `version` (overriding
+the digest-pinned default; `latest` is rejected) and `expose`. An
+environment with only apps and no services can omit `emulators:` entirely.
+The per-cloud details live with each cloud's services:
 
-With `expose: true`, the emulator's API is served through the cluster
-ingress at `aws.<namespace>.localtest.me` — the AWS CLI and SDKs on your
-machine work with no port-forward. A profile makes it painless:
-
-```ini
-# ~/.aws/config
-[profile mayfly]
-region = us-east-1
-endpoint_url = http://aws.<namespace>.localtest.me
-
-# ~/.aws/credentials
-[mayfly]
-aws_access_key_id = test
-aws_secret_access_key = test
-```
-
-Then `aws --profile mayfly rds describe-db-instances`, `... s3 ls`, etc.
-
-**Default is off, deliberately**: the emulated API is unauthenticated — it
-can mutate environment state and read Secrets Manager values — so it should
-never be reachable by default on a shared cluster. Without `expose`, use
-`kubectl -n <namespace> port-forward svc/aws 4566:4566` and
-`endpoint_url = http://localhost:4566`. Either way this is a convenience
-for humans: apps under test should keep using the in-cluster
-`AWS_ENDPOINT_URL` mayfly injects.
-
-The emulator runs inside the namespace behind a Service named `aws` on port
-4566. Every app pod gets `AWS_ENDPOINT_URL=http://aws:4566` with
-`test`/`test` credentials, so unmodified AWS SDK code works.
-
-Defaults are **digest-pinned** upstream images; the pinned MiniStack
-(≥ 1.4.4) includes the ALB data plane and the valkey ElastiCache engine —
-both upstreamed from mayfly. Override `image`/`version` only to pin your
-own build or a self-hosted mirror.
+- [The AWS emulator](services/aws.md#the-aws-emulator), including
+  [laptop access to the AWS API](services/aws.md#laptop-access-to-the-aws-api).
+- [The Azure emulator](services/azure.md#the-azure-emulator).

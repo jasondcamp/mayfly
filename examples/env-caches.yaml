@@ -13,6 +13,9 @@ apiVersion: mayfly/v1alpha1
 seed: caches-1
 ttl: 4h
 
+emulators:
+  aws:
+    kind: ministack
 
 services:
   elasticache:

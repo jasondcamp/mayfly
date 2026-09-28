@@ -1,0 +1,45 @@
+# Emulator conformance spec: floci-az (Azure).
+# keyvault + servicebus go through the emulator (Service Bus Docker-backed
+# via kubedock); postgresflexible + azuresql are native engine pods. The
+# smoke test leans on dragonfly's Azure round-trips, so run this via
+# scripts/emulator-test.sh — it overrides the dragonfly image with a
+# working-tree build (the published pin may predate the Azure checks).
+# Needs the Azure SDK extra: pip install 'mayfly-cli[azure]' (uv sync has it).
+apiVersion: mayfly/v1alpha1
+seed: emu-floci-az
+ttl: 2h
+
+emulators:
+  azure:
+    kind: floci-az
+
+services:
+  keyvault:
+    - name: app-secrets
+      secrets:
+        - name: api-key
+          value: "test-key-123"
+        - name: signing-key
+          generate: true
+
+  servicebus:
+    - name: main
+      queues: [jobs]
+      topics:
+        - name: events
+          subscriptions: [worker]
+
+  postgresflexible:
+    - name: appdb
+      dbName: app
+
+  azuresql:
+    - name: coredb
+      dbName: app
+
+apps:
+  dragonfly:
+    image: ghcr.io/jasondcamp/mayfly-dragonfly:0.1.3
+    port: 8080
+    readiness: {path: /readyz, initialDelaySeconds: 3, periodSeconds: 10, timeoutSeconds: 30}
+    resources: {memory: 64Mi, memoryLimit: 256Mi}

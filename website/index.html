@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>mayfly — Ephemeral test environments with an AWS harness.</title>
+    <title>mayfly — Ephemeral test environments with an AWS &amp; Azure harness.</title>
     <link rel="icon" type="image/png" href="assets/favicon-64.png">
     <script>window.statsmatic=window.statsmatic||function(){(statsmatic.q=statsmatic.q||[]).push(arguments)};</script>
     <script defer data-site="sm_fliegu5yyzzy" src="https://cdn.statsmatic.io/sm.js"></script>
@@ -144,7 +144,7 @@
                         Ephemeral environments.<br>Delightfully fast.
                     </p>
                     <p class="text-base text-text-muted leading-relaxed">
-                        One YAML spec spins up a test environment in an isolated Kubernetes namespace: an emulated AWS harness — S3, RDS, ElastiCache, Kafka, DynamoDB — plus your apps, wired up through real AWS APIs.<br><br>
+                        One YAML spec spins up a test environment in an isolated Kubernetes namespace: an emulated cloud harness — AWS (S3, RDS, ElastiCache, Kafka, DynamoDB) and Azure (Key Vault, Postgres, SQL) — plus your apps, talking to it with the SDKs they already use.<br><br>
                         Spin up. Test. Tear down. A TTL reaper destroys anything left behind.
                     </p>
                 </div>
@@ -186,7 +186,7 @@
                             <span class="text-brand-amber">$ mayfly up env.yaml</span>
                         </div>
                         <div class="term-row text-text-muted mb-4">
-                            mayfly 0.1.6 <span class="mx-2">·</span> ephemeral by design
+                            mayfly 0.2.0 <span class="mx-2">·</span> ephemeral by design
                         </div>
 
                         <div class="term-row text-text-dim border-t border-dashed border-base-700 w-full my-2"></div>
@@ -272,7 +272,7 @@
                 </div>
                 <h3 class="text-xl text-text-main font-semibold">One spec, full stack</h3>
                 <p class="text-sm text-text-muted leading-relaxed">
-                    Declare S3 buckets, RDS databases, ElastiCache, Kafka topics, and app deployments in one YAML file. An in-cluster AWS emulator plays the cloud — your apps can't tell. Everything spins up together. Everything tears down together.
+                    Declare S3 buckets, RDS databases, ElastiCache, Kafka topics, Key Vaults, and app deployments in one YAML file. In-cluster AWS and Azure emulators play the cloud — your apps can't tell. Everything spins up together. Everything tears down together.
                 </p>
             </div>
 
@@ -310,8 +310,11 @@
                         <div class="code-line"><span class="hl-key">seed</span>: <span class="hl-value">pr-1234</span>      <span class="hl-comment"># env name derives from this</span></div>
                         <div class="code-line"><span class="hl-key">ttl</span>: <span class="hl-value">8h</span>           <span class="hl-comment"># reaped after this</span></div>
                         <div class="code-line"> </div>
-                        <div class="code-line"><span class="hl-key">emulator</span>:</div>
-                        <div class="code-line">  <span class="hl-key">kind</span>: <span class="hl-value">ministack</span></div>
+                        <div class="code-line"><span class="hl-key">emulators</span>:</div>
+                        <div class="code-line">  <span class="hl-key">aws</span>:</div>
+                        <div class="code-line">    <span class="hl-key">kind</span>: <span class="hl-value">ministack</span>  <span class="hl-comment"># or floci</span></div>
+                        <div class="code-line">  <span class="hl-key">azure</span>:</div>
+                        <div class="code-line">    <span class="hl-key">kind</span>: <span class="hl-value">floci-az</span></div>
                         <div class="code-line"> </div>
                         <div class="code-line"><span class="hl-key">services</span>:</div>
                         <div class="code-line">  <span class="hl-key">s3</span>:</div>
@@ -325,6 +328,8 @@
                         <div class="code-line">  <span class="hl-key">msk</span>:</div>
                         <div class="code-line">    - <span class="hl-key">name</span>: <span class="hl-value">events</span></div>
                         <div class="code-line">      <span class="hl-key">topics</span>: [<span class="hl-value">orders</span>]</div>
+                        <div class="code-line">  <span class="hl-key">keyvault</span>:           <span class="hl-comment"># azure</span></div>
+                        <div class="code-line">    - <span class="hl-key">name</span>: <span class="hl-value">app-secrets</span></div>
                         <div class="code-line"> </div>
                         <div class="code-line"><span class="hl-key">apps</span>:</div>
                         <div class="code-line">  <span class="hl-key">api</span>:</div>
@@ -342,7 +347,9 @@
                             Local emulation, cloud-compatible
                         </h4>
                         <p class="text-sm text-text-muted pl-5 leading-relaxed">
-                            AWS-compatible emulator running in-cluster behind <code class="text-text-main">http://aws:4566</code>. Swap it out if you like. Your apps don't care.
+                            AWS runs in-cluster behind <code class="text-text-main">http://aws:4566</code> — MiniStack or floci, your pick.<br>
+                            Azure runs on floci-az behind <code class="text-text-main">http://azure:4577</code>.<br>
+                            Swap the backend if you like. Your apps don't care.
                         </p>
                     </div>
 
@@ -354,7 +361,7 @@
                         <p class="text-sm text-text-muted pl-5 leading-relaxed">
                             We don't mount your Docker socket.<br>
                             We don't need privileged pods.<br>
-                            We don't touch real AWS.<br>
+                            We don't touch real AWS or Azure.<br>
                             Sleep well.
                         </p>
                     </div>
@@ -489,10 +496,10 @@
                 <!-- Output block (fake) -->
                 <div class="bg-[#1a1c1f] border border-base-border rounded-lg p-4 font-mono text-sm flex flex-col justify-center gap-1 opacity-70 cursor-default">
                     <div>
-                        <span class="text-brand-amber">$</span> <span class="text-brand-green">mayfly --version</span>
+                        <span class="text-brand-amber">$</span> <span class="text-brand-green">mayfly version</span>
                     </div>
                     <div class="text-text-main flex items-center">
-                        mayfly 0.1.6 <div class="w-2 h-3.5 bg-brand-green ml-2 animate-blink mb-0.5"></div>
+                        mayfly 0.2.0 <div class="w-2 h-3.5 bg-brand-green ml-2 animate-blink mb-0.5"></div>
                     </div>
                 </div>
             </div>
