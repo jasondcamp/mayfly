@@ -2,8 +2,10 @@
 
 import json
 import logging
+import shutil
 import sys
 import time
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -24,6 +26,11 @@ from . import (
 from .emulators import (
     AWS_PORT,
     AWS_SERVICE,
+    AZURE_PORT,
+    AZURE_SERVICE,
+    OVERRIDE_ENV,
+    active_overrides,
+    azure_emulator_manifests,
     emulator_manifests,
     msk_bootstrap,
     resolve_image,
@@ -35,16 +42,31 @@ from .installer import (
     default_cli_image,
     reaper_manifests,
 )
+from .helm import (
+    HelmError,
+    helm_checks,
+    helm_deployments,
+    prepare_rendered_docs,
+    render_chart,
+    require_helm,
+    resolve_placeholders,
+)
 from .k8s import ClusterUnreachable, K8s, summarize_pods
 from .manifests import (
     app_checks,
     app_ingress_host,
     app_manifests,
+    azure_checks,
     init_app_config_hash,
     init_app_manifest,
 )
 from .naming import env_name, namespace_for
-from .provisioners import ProvisionContext, provision_all
+from .provisioners import (
+    ProvisionContext,
+    provision_all,
+    resolve_backend,
+)
+from .provisioners.azure import azure_client_factory
 from .spec import EnvSpec, load_spec, parse_ttl
 
 
@@ -134,6 +156,25 @@ def _load(
     return spec
 
 
+def _dev_overrides() -> dict[str, str]:
+    """Active dev-override images (MAYFLY_<COMPONENT>_IMAGE); exits cleanly
+    on an invalid ref instead of failing deep inside manifest generation."""
+    try:
+        return active_overrides()
+    except ValueError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(1) from None
+
+
+def _announce_overrides(overrides: dict[str, str]) -> None:
+    for component, ref in overrides.items():
+        typer.secho(
+            f"note: dev override {component} -> {ref} ({OVERRIDE_ENV[component]})",
+            fg="yellow",
+            err=True,
+        )
+
+
 def _seed_label(seed: str) -> str:
     return seed.replace(" ", "_")[:63]
 
@@ -203,9 +244,22 @@ def up(
 ):
     """Create or update the environment described by the spec."""
     spec = _load(spec_file, seed, overrides)
+    enabled_helm = {n: h for n, h in spec.helm_apps.items() if h.enabled}
+    if enabled_helm:
+        try:
+            require_helm()  # fail before touching the cluster
+        except HelmError as e:
+            typer.echo(f"error: {e}", err=True)
+            raise typer.Exit(1) from None
+    aws_em, azure_em = spec.emulators.aws, spec.emulators.azure
+    aws_needed, azure_needed = aws_em is not None, azure_em is not None
+    if azure_needed:
+        _require_azure_sdk()  # fail before touching the cluster
+    overrides = _dev_overrides()
     name = env_name(spec.seed)
     ns = namespace_for(spec.seed, spec.namespace_prefix)
     _banner()
+    _announce_overrides(overrides)
     _say(f"environment {name} (namespace {ns}, seed {spec.seed!r}, ttl {spec.ttl})")
     t_up = time.monotonic()
 
@@ -229,24 +283,49 @@ def up(
 
     _ok(f"namespace {ns}", t0)
 
-    t0 = time.monotonic()
-    _say(f"deploying emulator {spec.emulator.kind} ({resolve_image(spec.emulator)})")
-    k8s.apply_all(
-        emulator_manifests(spec.emulator, ns, msk_bootstrap(spec), spec.ingress_domain),
-        ns,
-    )
-    k8s.wait_deployment(ns, AWS_SERVICE)
-    _ok("emulator ready", t0)
+    if aws_needed:
+        t0 = time.monotonic()
+        _say(f"deploying aws emulator {aws_em.kind} ({resolve_image(aws_em)})")
+        k8s.apply_all(
+            emulator_manifests(aws_em, ns, msk_bootstrap(spec), spec.ingress_domain),
+            ns,
+        )
+        k8s.wait_deployment(ns, AWS_SERVICE)
+        _ok("aws emulator ready", t0)
+
+    if azure_needed:
+        t0 = time.monotonic()
+        _say(f"deploying azure emulator {azure_em.kind} ({resolve_image(azure_em)})")
+        sb_needed = any(
+            resolve_backend(s.backend, "servicebus", spec) == "emulator"
+            for s in spec.services.servicebus
+        )
+        k8s.apply_all(
+            azure_emulator_manifests(azure_em, ns, spec.ingress_domain, sb_needed), ns
+        )
+        k8s.wait_deployment(ns, AZURE_SERVICE)
+        _ok("azure emulator ready", t0)
 
     t0 = time.monotonic()
     _say("provisioning services")
-    with k8s.port_forward(ns, AWS_SERVICE, AWS_PORT) as local_port:
+    with ExitStack() as stack:
+        session_factory = None
+        if aws_needed:
+            aws_port = stack.enter_context(k8s.port_forward(ns, AWS_SERVICE, AWS_PORT))
+            session_factory = _aws_session_factory(f"http://127.0.0.1:{aws_port}")
+        azure_clients = None
+        if azure_needed:
+            azure_port = stack.enter_context(
+                k8s.port_forward(ns, AZURE_SERVICE, AZURE_PORT)
+            )
+            azure_clients = azure_client_factory(f"http://127.0.0.1:{azure_port}")
         ctx = ProvisionContext(
             k8s=k8s,
             namespace=ns,
-            session_factory=_aws_session_factory(f"http://127.0.0.1:{local_port}"),
+            session_factory=session_factory,
             progress=_detail,
             ingress_domain=spec.ingress_domain,
+            azure_clients=azure_clients,
         )
         secrets = provision_all(spec, ctx)
 
@@ -283,7 +362,9 @@ def up(
         _say(f"init: {init_name}")
         t0 = time.monotonic()
         k8s.delete_job(ns, job_name)
-        k8s.apply(init_app_manifest(init_name, init_spec), namespace=ns)
+        k8s.apply(
+            init_app_manifest(init_name, init_spec, azure_needed, aws_needed), namespace=ns
+        )
         try:
             k8s.wait_job(ns, job_name, init_spec.timeout_seconds)
             _ok(f"init {init_name} completed", t0)
@@ -297,15 +378,56 @@ def up(
 
     if enabled_apps:
         _say(f"deploying apps: {', '.join(enabled_apps)}")
-        checks_json = json.dumps(app_checks(spec.apps))
+        checks_json = json.dumps(app_checks(spec.apps) + helm_checks(spec.helm_apps))
+        az_checks = azure_checks(spec.services)
+        azure_checks_json = json.dumps(az_checks) if az_checks else ""
         for app_name, app_spec in enabled_apps.items():
             k8s.apply_all(
-                app_manifests(app_name, app_spec, ns, checks_json, spec.ingress_domain), ns
+                app_manifests(
+                    app_name, app_spec, ns, checks_json, spec.ingress_domain,
+                    azure_needed, azure_checks_json, aws_needed,
+                ),
+                ns,
             )
+
+    # helm apps are applied before the apps wait: dragonfly's /readyz only
+    # latches once every check — including helm check targets — is green,
+    # so waiting on it first would deadlock the up.
+    helm_waits: dict[str, list[str]] = {}
+    if enabled_helm:
+        _say(f"deploying helm apps: {', '.join(enabled_helm)}")
+        for helm_name, helm_spec in enabled_helm.items():
+            t0 = time.monotonic()
+            try:
+                values = resolve_placeholders(helm_spec.values, secrets)
+                docs = render_chart(helm_name, helm_spec, ns, values)
+            except HelmError as e:
+                typer.echo(f"error: {e}", err=True)
+                raise typer.Exit(1) from None
+            docs, warnings = prepare_rendered_docs(helm_name, docs, ns)
+            for w in warnings:
+                _detail(w)
+            k8s.apply_all(docs, ns)
+            _ok(f"{helm_name} rendered + applied ({len(docs)} object(s))", t0)
+            helm_waits[helm_name] = helm_deployments(docs)
+
+    if enabled_apps:
         for app_name in enabled_apps:
             t0 = time.monotonic()
             k8s.wait_deployment(ns, app_name)
             _ok(f"{app_name} ready", t0)
+
+    for helm_name, deploy_names in helm_waits.items():
+        if not deploy_names:
+            _detail(f"{helm_name}: no Deployments rendered; not waiting")
+            continue
+        t0 = time.monotonic()
+        deadline = time.monotonic() + enabled_helm[helm_name].timeout_seconds
+        for deploy_name in deploy_names:
+            k8s.wait_deployment(
+                ns, deploy_name, timeout=max(1, int(deadline - time.monotonic()))
+            )
+        _ok(f"{helm_name} ready ({len(deploy_names)} deployment(s))", t0)
 
     _rule()
     typer.secho(
@@ -328,13 +450,22 @@ def up(
             f"(load-balanced -> {alb.target_app})",
         )
     _kv("Secrets", f"kubectl -n {ns} get secrets")
-    if spec.emulator.expose:
-        _kv(
-            "AWS API",
-            f"http://aws.{ns}.{spec.ingress_domain}  (AWS_ENDPOINT_URL; creds test/test)",
-        )
-    else:
-        _kv("AWS API", f"kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
+    if aws_needed:
+        if aws_em.expose:
+            _kv(
+                "AWS API",
+                f"http://aws.{ns}.{spec.ingress_domain}  (AWS_ENDPOINT_URL; creds test/test)",
+            )
+        else:
+            _kv("AWS API", f"kubectl -n {ns} port-forward svc/{AWS_SERVICE} 4566:4566")
+    if azure_needed:
+        if azure_em.expose:
+            _kv("Azure API", f"http://az.{ns}.{spec.ingress_domain}")
+        else:
+            _kv(
+                "Azure API",
+                f"kubectl -n {ns} port-forward svc/{AZURE_SERVICE} 4577:4577",
+            )
     _kv("Teardown", f"mayfly down {spec_file}")
 
 
@@ -414,6 +545,10 @@ def status(
     secret_names += [f"rds-{d.name}" for d in spec.services.rds]
     secret_names += [f"elasticache-{c.name}" for c in spec.services.elasticache]
     secret_names += [f"msk-{m.name}" for m in spec.services.msk]
+    secret_names += [f"keyvault-{v.name}" for v in spec.services.keyvault]
+    secret_names += [f"servicebus-{s.name}" for s in spec.services.servicebus]
+    secret_names += [f"pgflex-{d.name}" for d in spec.services.postgresflexible]
+    secret_names += [f"azuresql-{d.name}" for d in spec.services.azuresql]
     for sn in secret_names:
         data = k8s.read_secret(ns, sn)
         state = "ok" if data else "MISSING"
@@ -429,20 +564,61 @@ def render(
     """Print the resolved plan (name, namespace, manifests) without touching the cluster."""
     spec = _load(spec_file, seed, overrides)
     ns = namespace_for(spec.seed, spec.namespace_prefix)
-    docs = [
-        {"mayfly": {"name": env_name(spec.seed), "namespace": ns, "ttl": spec.ttl,
-                    "emulator": resolve_image(spec.emulator), "specHash": spec.spec_hash()}},
-        *emulator_manifests(spec.emulator, ns, msk_bootstrap(spec), spec.ingress_domain),
-    ]
+    aws_em, azure_em = spec.emulators.aws, spec.emulators.azure
+    aws_needed, azure_needed = aws_em is not None, azure_em is not None
+    overrides = _dev_overrides()
+    _announce_overrides(overrides)  # stderr: render stdout stays pure YAML
+    emulators = {
+        cloud: resolve_image(em)
+        for cloud, em in (("aws", aws_em), ("azure", azure_em))
+        if em is not None
+    }
+    header = {"name": env_name(spec.seed), "namespace": ns, "ttl": spec.ttl,
+              "emulators": emulators, "specHash": spec.spec_hash()}
+    if overrides:
+        header["devOverrides"] = overrides
+    docs: list[dict] = [{"mayfly": header}]
+    if aws_needed:
+        docs.extend(
+            emulator_manifests(aws_em, ns, msk_bootstrap(spec), spec.ingress_domain)
+        )
+    if azure_needed:
+        sb_needed = any(
+            resolve_backend(s.backend, "servicebus", spec) == "emulator"
+            for s in spec.services.servicebus
+        )
+        docs.extend(
+            azure_emulator_manifests(azure_em, ns, spec.ingress_domain, sb_needed)
+        )
     for init_name, init_spec in spec.init_apps.items():
         if init_spec.enabled:
-            docs.append(init_app_manifest(init_name, init_spec))
-    checks_json = json.dumps(app_checks(spec.apps))
+            docs.append(init_app_manifest(init_name, init_spec, azure_needed, aws_needed))
+    checks_json = json.dumps(app_checks(spec.apps) + helm_checks(spec.helm_apps))
+    az_checks = azure_checks(spec.services)
+    azure_checks_json = json.dumps(az_checks) if az_checks else ""
     for app_name, app_spec in spec.apps.items():
         if app_spec.enabled:
             docs.extend(
-                app_manifests(app_name, app_spec, ns, checks_json, spec.ingress_domain)
+                app_manifests(
+                    app_name, app_spec, ns, checks_json, spec.ingress_domain,
+                    azure_needed, azure_checks_json, aws_needed,
+                )
             )
+    enabled_helm = {n: h for n, h in spec.helm_apps.items() if h.enabled}
+    if enabled_helm:
+        # render runs pre-provisioning: ${secret:...} placeholders stay verbatim
+        if shutil.which("helm"):
+            for helm_name, helm_spec in enabled_helm.items():
+                try:
+                    rendered = render_chart(helm_name, helm_spec, ns, helm_spec.values)
+                except HelmError as e:
+                    typer.echo(f"error: {e}", err=True)
+                    raise typer.Exit(1) from None
+                kept, _warnings = prepare_rendered_docs(helm_name, rendered, ns)
+                docs.extend(kept)
+        else:
+            # stderr: render stdout must stay pure YAML (e2e greps it)
+            typer.echo("# note: helmApps not rendered (helm not on PATH)", err=True)
     typer.echo(yaml.safe_dump_all(docs, sort_keys=False))
 
 
@@ -588,6 +764,30 @@ def extend(
     expires = (datetime.now(timezone.utc) + delta).isoformat()
     k8s.core.patch_namespace(ns, {"metadata": {"annotations": {EXPIRES_AT_ANNOTATION: expires}}})
     _say(f"{ns} now expires {expires}")
+
+
+def _require_azure_sdk() -> None:
+    """Fail fast (before touching the cluster) when emulator-backed Azure
+    services are in the spec but the optional SDKs aren't installed."""
+    import importlib.util
+
+    def _has(mod: str) -> bool:
+        try:  # find_spec raises if a parent package is absent entirely
+            return importlib.util.find_spec(mod) is not None
+        except ModuleNotFoundError:
+            return False
+
+    missing = [
+        mod for mod in ("azure.keyvault.secrets", "azure.servicebus") if not _has(mod)
+    ]
+    if missing:
+        typer.echo(
+            "error: this spec uses Azure services, which need the optional "
+            "Azure SDKs — install with: pip install 'mayfly-cli[azure]' "
+            f"(missing: {', '.join(missing)})",
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 def _aws_session_factory(endpoint_url: str):

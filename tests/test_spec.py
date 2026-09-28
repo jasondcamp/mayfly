@@ -4,13 +4,16 @@ import pytest
 
 from mayfly.spec import EnvSpec, load_spec, parse_ttl
 
+# every service class needs its cloud emulator declared
+EMULATORS = {"aws": {"kind": "ministack"}}
+
 MINIMAL = {"seed": "test-1"}
 
 FULL = {
     "apiVersion": "mayfly/v1alpha1",
     "seed": "test-full",
     "ttl": "2h",
-    "services": {
+    "emulators": EMULATORS, "services": {
         "s3": {"buckets": ["assets", "uploads"]},
         "rds": [{"name": "appdb", "engine": "postgres", "dbName": "app"}],
         "elasticache": [{"name": "cache-a"}],
@@ -50,13 +53,13 @@ def test_bad_api_version_rejected():
 def test_bad_engine_rejected():
     with pytest.raises(ValueError):
         EnvSpec.model_validate(
-            {**MINIMAL, "services": {"rds": [{"name": "db", "engine": "oracle"}]}}
+            {**MINIMAL, "emulators": EMULATORS, "services": {"rds": [{"name": "db", "engine": "oracle"}]}}
         )
 
 
 def test_bad_resource_name_rejected():
     with pytest.raises(ValueError):
-        EnvSpec.model_validate({**MINIMAL, "services": {"rds": [{"name": "Bad_Name"}]}})
+        EnvSpec.model_validate({**MINIMAL, "emulators": EMULATORS, "services": {"rds": [{"name": "Bad_Name"}]}})
 
 
 @pytest.mark.parametrize(
@@ -95,7 +98,7 @@ def test_namespace_prefix_validated():
 
 def test_dynamodb_spec():
     spec = EnvSpec.model_validate(
-        {"seed": "x", "services": {"dynamodb": [{"name": "sessions"}, {"name": "carts", "hashKey": "cartId"}]}}
+        {"seed": "x", "emulators": EMULATORS, "services": {"dynamodb": [{"name": "sessions"}, {"name": "carts", "hashKey": "cartId"}]}}
     )
     assert spec.services.dynamodb[0].hash_key == "id"
     assert spec.services.dynamodb[1].hash_key == "cartId"
@@ -105,14 +108,14 @@ def test_alb_spec_and_target_validation():
     spec = EnvSpec.model_validate(
         {
             "seed": "x",
-            "services": {"alb": [{"name": "hello-alb", "targetApp": "hello"}]},
+            "emulators": EMULATORS, "services": {"alb": [{"name": "hello-alb", "targetApp": "hello"}]},
             "apps": {"hello": {"image": "h:1"}},
         }
     )
     assert spec.services.alb[0].target_app == "hello"
     with pytest.raises(ValueError, match="not in apps"):
         EnvSpec.model_validate(
-            {"seed": "x", "services": {"alb": [{"name": "a", "targetApp": "ghost"}]}}
+            {"seed": "x", "emulators": EMULATORS, "services": {"alb": [{"name": "a", "targetApp": "ghost"}]}}
         )
 
 
@@ -120,7 +123,7 @@ def test_elasticache_engine_and_version():
     spec = EnvSpec.model_validate(
         {
             "seed": "x",
-            "services": {
+            "emulators": EMULATORS, "services": {
                 "elasticache": [
                     {"name": "a"},
                     {"name": "b", "engine": "memcached", "version": "1.6"},
@@ -135,7 +138,7 @@ def test_elasticache_engine_and_version():
     assert (c.engine, c.resolved_version, c.port) == ("valkey", "8", 6379)
     with pytest.raises(ValueError):
         EnvSpec.model_validate(
-            {"seed": "x", "services": {"elasticache": [{"name": "a", "engine": "mongo"}]}}
+            {"seed": "x", "emulators": EMULATORS, "services": {"elasticache": [{"name": "a", "engine": "mongo"}]}}
         )
 
 
@@ -143,7 +146,7 @@ def test_secretsmanager_spec():
     spec = EnvSpec.model_validate(
         {
             "seed": "x",
-            "services": {
+            "emulators": EMULATORS, "services": {
                 "secretsmanager": [
                     {"name": "app/api-key", "value": "v1"},
                     {"name": "app/signing-key", "generate": True},
@@ -159,7 +162,7 @@ def test_secretsmanager_spec():
         {"name": "bad name!", "value": "v"},           # invalid chars
     ):
         with pytest.raises(ValueError):
-            EnvSpec.model_validate({"seed": "x", "services": {"secretsmanager": [bad]}})
+            EnvSpec.model_validate({"seed": "x", "emulators": EMULATORS, "services": {"secretsmanager": [bad]}})
 
 
 def test_sm_k8s_name_mangling():
@@ -280,3 +283,129 @@ def test_ingress_domain_threads_into_hosts():
         {"image": "x:1", "port": 80, "ingress": {"host": "api.example.com"}}
     )
     assert app_ingress_host("api", pinned, "pr-42", "envs.example.com") == "api.example.com"
+
+
+HELM_MINIMAL = {
+    "seed": "helm-1",
+    "helmApps": {
+        "podinfo": {
+            "chart": "podinfo",
+            "repo": "https://stefanprodan.github.io/podinfo",
+            "version": "6.9.1",
+        }
+    },
+}
+
+
+def test_helm_app_minimal():
+    spec = EnvSpec.model_validate(HELM_MINIMAL)
+    h = spec.helm_apps["podinfo"]
+    assert h.enabled is True
+    assert h.values == {}
+    assert h.timeout_seconds == 300
+    assert h.check is None
+
+
+def test_helm_check_shapes():
+    for check in (
+        {"kind": "tcp", "target": "podinfo:9898"},
+        {"kind": "http", "target": "http://podinfo:9898/healthz"},
+        {"target": "http://podinfo:9898/healthz"},  # kind defaults to http
+    ):
+        raw = {**HELM_MINIMAL}
+        raw["helmApps"] = {"podinfo": {**HELM_MINIMAL["helmApps"]["podinfo"], "check": check}}
+        spec = EnvSpec.model_validate(raw)
+        assert spec.helm_apps["podinfo"].check.target == check["target"]
+
+
+def test_helm_app_rejections():
+    base = HELM_MINIMAL["helmApps"]["podinfo"]
+    bad_entries = [
+        {k: v for k, v in base.items() if k != "version"},  # missing version
+        {**base, "version": "latest"},
+        {**base, "version": "^6.0"},
+        {**base, "version": ">=1.0"},
+        {**base, "version": ""},
+        {**base, "repo": "oci://ghcr.io/org/chart"},
+        {**base, "repo": "./charts/local"},
+        {**base, "chart": "bitnami/nginx"},
+        {**base, "bogusField": True},
+        {**base, "check": {"kind": "tcp", "target": "no-port"}},
+        {**base, "check": {"kind": "http", "target": "podinfo:9898"}},
+    ]
+    for bad in bad_entries:
+        with pytest.raises(ValueError):
+            EnvSpec.model_validate({"seed": "x", "helmApps": {"podinfo": bad}})
+    with pytest.raises(ValueError):  # bad key name
+        EnvSpec.model_validate({"seed": "x", "helmApps": {"Bad_Name": base}})
+    with pytest.raises(ValueError, match="collides"):  # key collides with apps
+        EnvSpec.model_validate(
+            {"seed": "x", "apps": {"podinfo": {"image": "x:1"}}, "helmApps": {"podinfo": base}}
+        )
+
+
+def test_helm_values_change_spec_hash():
+    a = EnvSpec.model_validate(HELM_MINIMAL)
+    raw = {**HELM_MINIMAL}
+    raw["helmApps"] = {
+        "podinfo": {**HELM_MINIMAL["helmApps"]["podinfo"], "values": {"replicaCount": 2}}
+    }
+    b = EnvSpec.model_validate(raw)
+    assert a.spec_hash() != b.spec_hash()
+
+
+# ------------------------------------------------ explicit emulators
+
+
+@pytest.mark.parametrize(
+    ("services", "cloud"),
+    [
+        ({"rds": [{"name": "db"}]}, "aws"),
+        ({"s3": {"buckets": ["b"]}}, "aws"),
+        ({"keyvault": [{"name": "vault"}]}, "azure"),
+        # strict per cloud: native-only classes still need their cloud declared
+        ({"postgresflexible": [{"name": "db"}]}, "azure"),
+        ({"rds": [{"name": "db", "backend": "native"}]}, "aws"),
+    ],
+)
+def test_service_without_its_cloud_emulator_rejected(services, cloud):
+    with pytest.raises(ValueError, match=f"declare emulators.{cloud}"):
+        EnvSpec.model_validate({"seed": "x", "services": services})
+
+
+def test_other_clouds_emulator_does_not_count():
+    with pytest.raises(ValueError, match="declare emulators.azure"):
+        EnvSpec.model_validate(
+            {"seed": "x", "emulators": EMULATORS, "services": {"keyvault": [{"name": "vault"}]}}
+        )
+
+
+def test_no_services_needs_no_emulators():
+    spec = EnvSpec.model_validate(
+        {"seed": "x", "services": {"s3": {"buckets": []}}, "apps": {"a": {"image": "a:1"}}}
+    )
+    assert spec.emulators.aws is None and spec.emulators.azure is None
+
+
+def test_emulator_kind_required():
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "emulators": {"aws": {}}})
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "emulators": {"azure": {}}})
+
+
+def test_emulator_kind_must_match_cloud():
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "emulators": {"aws": {"kind": "floci-az"}}})
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "emulators": {"azure": {"kind": "ministack"}}})
+
+
+def test_unknown_cloud_rejected():
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "emulators": {"gcp": {"kind": "x"}}})
+
+
+def test_old_emulator_block_rejected():
+    with pytest.raises(ValueError):
+        EnvSpec.model_validate({"seed": "x", "emulator": {"kind": "ministack"}})

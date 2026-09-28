@@ -26,5 +26,6 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       - name: install k3d
         run: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      - uses: azure/setup-helm@v4  # helmApps in examples/env.yaml need helm on PATH
       - run: uv sync
       - run: chmod +x scripts/e2e.sh examples/smoke-test.sh && ./scripts/e2e.sh mayfly-ci

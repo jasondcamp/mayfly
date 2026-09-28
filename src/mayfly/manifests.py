@@ -6,8 +6,14 @@ emulators (floci) fatally misparse the analogous *_PORT variable as an
 integer config property.
 """
 
-from .emulators import AWS_ENDPOINT
-from .spec import AppSpec, InitAppSpec
+from .emulators import AWS_ENDPOINT, AZURE_ENDPOINT
+from .provisioners.azure import (
+    keyvault_url,
+    servicebus_connection_string,
+    storage_connection_string,
+)
+from .provisioners.native import DB_USER, MSSQL_PASSWORD, MSSQL_USER
+from .spec import AppSpec, InitAppSpec, ServicesSpec
 
 AWS_ENV = {
     "AWS_ENDPOINT_URL": AWS_ENDPOINT,
@@ -15,6 +21,16 @@ AWS_ENV = {
     "AWS_SECRET_ACCESS_KEY": "test",
     "AWS_DEFAULT_REGION": "us-east-1",
 }
+
+# each bundle is injected only when the spec declares that cloud's emulator
+AZURE_ENV = {
+    "AZURE_EMULATOR_ENDPOINT": AZURE_ENDPOINT,
+    "AZURE_STORAGE_CONNECTION_STRING": storage_connection_string(),
+}
+
+
+def _base_env(azure_env: bool, aws_env: bool) -> dict[str, str]:
+    return {**(AWS_ENV if aws_env else {}), **(AZURE_ENV if azure_env else {})}
 
 
 def _env_list(env: dict[str, str]) -> list[dict]:
@@ -68,7 +84,9 @@ def init_app_config_hash(name: str, init: InitAppSpec) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-def init_app_manifest(name: str, init: InitAppSpec) -> dict:
+def init_app_manifest(
+    name: str, init: InitAppSpec, azure_env: bool = False, aws_env: bool = True
+) -> dict:
     """A one-shot Job for an initApps entry. The config-hash annotation is
     the run ledger: the completed Job records what configuration last
     succeeded, which runPolicy once/on-change consult before rerunning."""
@@ -78,7 +96,7 @@ def init_app_manifest(name: str, init: InitAppSpec) -> dict:
     container: dict = {
         "name": name,
         "image": init.image,
-        "env": _env_list({**AWS_ENV, **init.env}),
+        "env": _env_list({**_base_env(azure_env, aws_env), **init.env}),
         "resources": {
             "requests": {"cpu": init.resources.cpu, "memory": init.resources.memory},
             "limits": limits,
@@ -144,17 +162,71 @@ def app_checks(apps: dict) -> list[dict]:
     return checks
 
 
+def azure_checks(services: ServicesSpec) -> list[dict]:
+    """Azure-service checks derived from the spec — consumed by observer
+    apps (dragonfly) via MAYFLY_AZURE_CHECKS. Spec-driven rather than
+    control-plane-discovered: floci-az's ARM listing support is unverified,
+    and the native database classes are invisible to any control plane."""
+    return [
+        {
+            "name": vault.name,
+            "kind": "keyvault",
+            "url": keyvault_url(vault.name),
+            "secrets": [s.name for s in vault.secrets],
+        }
+        for vault in services.keyvault
+    ] + [
+        {
+            "name": sb.name,
+            "kind": "servicebus",
+            "connection": servicebus_connection_string(sb.name),
+            "queues": sb.queues,
+            "topics": [
+                {"name": t.name, "subscriptions": t.subscriptions} for t in sb.topics
+            ],
+        }
+        for sb in services.servicebus
+    ] + [
+        {
+            "name": db.name,
+            "kind": "pgflex",
+            "host": f"pgflex-{db.name}",
+            "port": 5432,
+            "db": db.db_name,
+            "user": DB_USER,
+        }
+        for db in services.postgresflexible
+    ] + [
+        {
+            "name": db.name,
+            "kind": "azuresql",
+            "host": f"azuresql-{db.name}",
+            "port": 1433,
+            "db": db.db_name,
+            "user": MSSQL_USER,
+            # fixture constant, not a real credential (parity with the
+            # DB_PASSWORD convention dragonfly already assumes)
+            "password": MSSQL_PASSWORD,
+        }
+        for db in services.azuresql
+    ]
+
+
 def app_manifests(
     name: str,
     app: AppSpec,
     namespace: str,
     checks_json: str = "",
     ingress_domain: str = "localtest.me",
+    azure_env: bool = False,
+    azure_checks_json: str = "",
+    aws_env: bool = True,
 ) -> list[dict]:
     env = {
-        **AWS_ENV,
+        **_base_env(azure_env, aws_env),
         "MAYFLY_APP_NAME": name,
         **({"MAYFLY_APP_CHECKS": checks_json} if checks_json else {}),
+        **({"MAYFLY_AZURE_CHECKS": azure_checks_json} if azure_checks_json else {}),
         **app.env,
     }
     limits = {"memory": app.resources.memory_limit}

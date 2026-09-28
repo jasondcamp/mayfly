@@ -3,7 +3,7 @@ from mayfly.spec import EnvSpec
 
 
 def _spec(kind: str) -> EnvSpec:
-    return EnvSpec.model_validate({"seed": "x", "emulator": {"kind": kind}})
+    return EnvSpec.model_validate({"seed": "x", "emulators": {"aws": {"kind": kind}}})
 
 
 def test_auto_on_ministack():
@@ -30,7 +30,9 @@ def test_explicit_override_wins():
 def test_latest_version_rejected():
     import pytest
     with pytest.raises(ValueError):
-        EnvSpec.model_validate({"seed": "x", "emulator": {"version": "latest"}})
+        EnvSpec.model_validate(
+            {"seed": "x", "emulators": {"aws": {"kind": "ministack", "version": "latest"}}}
+        )
 
 
 def test_dynamodb_emulator_only():

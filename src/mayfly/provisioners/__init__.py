@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from ..emulators import api_backed_services
 from ..k8s import K8s
-from ..spec import Backend, EnvSpec
+from ..spec import AZURE_CLASSES, Backend, EnvSpec
 from .aws import (
     AlbProvisioner,
     DynamoProvisioner,
@@ -32,20 +32,27 @@ from .aws import (
     S3Provisioner,
     SecretsManagerProvisioner,
 )
+from .azure import KeyVaultProvisioner, ServiceBusProvisioner
 from .native import (
+    AzureSqlNativeProvisioner,
     ElastiCacheNativeProvisioner,
     MskNativeProvisioner,
+    PostgresFlexibleNativeProvisioner,
     RdsNativeProvisioner,
 )
-
 
 @dataclass
 class ProvisionContext:
     k8s: K8s
     namespace: str
-    session_factory: Callable  # ()-> object with .client(service) -> boto3 client
+    # ()-> object with .client(service) -> boto3 client; None when the spec
+    # declares no AWS emulator
+    session_factory: Callable | None
     progress: Callable[[str], None]
     ingress_domain: str = "localtest.me"
+    # ()-> object with .keyvault(vault) / .servicebus_admin(namespace);
+    # None when the spec declares no Azure emulator
+    azure_clients: Callable | None = None
 
 
 _EMULATOR = {
@@ -56,18 +63,25 @@ _EMULATOR = {
     "dynamodb": DynamoProvisioner,  # in-process; no native backend exists
     "alb": AlbProvisioner,  # needs the patched ministack image (data plane)
     "secretsmanager": SecretsManagerProvisioner,  # in-process
+    "keyvault": KeyVaultProvisioner,  # in-process in floci-az
+    "servicebus": ServiceBusProvisioner,  # Docker-backed (Artemis) via kubedock
 }
 _NATIVE = {
     "rds": RdsNativeProvisioner,
     "elasticache": ElastiCacheNativeProvisioner,
     "msk": MskNativeProvisioner,
+    "postgresflexible": PostgresFlexibleNativeProvisioner,
+    "azuresql": AzureSqlNativeProvisioner,
 }
 
 
 def resolve_backend(backend: Backend, svc_class: str, spec: EnvSpec) -> str:
     if backend != "auto":
         return backend
-    return "emulator" if svc_class in api_backed_services(spec.emulator) else "native"
+    em = spec.emulators.azure if svc_class in AZURE_CLASSES else spec.emulators.aws
+    if em is None:  # spec validation guarantees this for declared classes
+        raise ValueError(f"{svc_class} has no emulator declared for its cloud")
+    return "emulator" if svc_class in api_backed_services(em) else "native"
 
 
 def provision_all(spec: EnvSpec, ctx: ProvisionContext) -> dict[str, dict[str, str]]:
@@ -81,6 +95,10 @@ def provision_all(spec: EnvSpec, ctx: ProvisionContext) -> dict[str, dict[str, s
         ("dynamodb", spec.services.dynamodb),
         ("alb", spec.services.alb),
         ("secretsmanager", spec.services.secretsmanager),
+        ("keyvault", spec.services.keyvault),
+        ("servicebus", spec.services.servicebus),
+        ("postgresflexible", spec.services.postgresflexible),
+        ("azuresql", spec.services.azuresql),
     ):
         for backend in ("emulator", "native"):
             chosen = [i for i in items if resolve_backend(i.backend, svc_class, spec) == backend]

@@ -5,7 +5,12 @@ LABEL org.opencontainers.image.source="https://github.com/jasondcamp/mayfly" \
 
 WORKDIR /app
 # pure-python clients only: no compiler needed in the image
-RUN pip install --no-cache-dir boto3 pg8000 redis pymemcache kafka-python-ng
+# (python-tds is the pure-python SQL Server driver — not pymssql/pyodbc)
+# azure-servicebus 7.15.0b2: pre-release pin for the pyAMQP fix that decodes
+# performatives with omitted trailing fields (Artemis/floci-az sends them;
+# <=7.14.x raises IndexError). Bump to 7.15.0 when it's released.
+RUN pip install --no-cache-dir boto3 pg8000 redis pymemcache kafka-python-ng \
+    azure-keyvault-secrets azure-servicebus==7.15.0b2 python-tds
 
 COPY app.py .
 EXPOSE 8080
